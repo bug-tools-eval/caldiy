@@ -1,3 +1,4 @@
+import process from "node:process";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
@@ -17,9 +18,15 @@ import { orderBy } from "lodash";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
   process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
@@ -133,11 +140,16 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
     const eventTypeUsers = eventType?.hosts?.length
       ? eventType.hosts.map((host) => host.user)
       : eventType.users;
-    const enrichedUsers = await userRepo.enrichUsersWithTheirProfiles(eventTypeUsers);
 
     const children = eventType.children || [];
     const allChildUsers = children.flatMap((c) => c.users);
-    const enrichedAllChildUsers = await userRepo.enrichUsersWithTheirProfiles(allChildUsers);
+
+    // The two profile-enrichment lookups don't depend on each other; previously
+    // they serialized two round-trips per event type. Run them concurrently.
+    const [enrichedUsers, enrichedAllChildUsers] = await Promise.all([
+      userRepo.enrichUsersWithTheirProfiles(eventTypeUsers),
+      userRepo.enrichUsersWithTheirProfiles(allChildUsers),
+    ]);
     const enrichedUsersMap = new Map(enrichedAllChildUsers.map((user) => [user.id, user]));
 
     const enrichedChildren = children.map((c) => ({
