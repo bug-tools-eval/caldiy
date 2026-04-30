@@ -732,26 +732,30 @@ export class UserAvailabilityService {
       return {};
     }
 
+    // get the set of weekdays defined in availability — same across all OOO records,
+    // so compute once instead of recomputing inside the reduce.
+    const availableWeekdays = new Set<number>();
+    for (const a of availability) {
+      if ("days" in a) {
+        for (const d of a.days) availableWeekdays.add(d);
+      }
+    }
+    const todayStartUtc = dayjs().utc().startOf("day");
+
     return outOfOfficeDays.reduce(
       (acc: IOutOfOfficeData, { start, end, toUser, user, reason, notes, showNotePublicly }) => {
         // here we should use startDate or today if start is before today
         // consider timezone in start and end date range
-        const startDateRange = dayjs(start).utc().isBefore(dayjs().startOf("day").utc())
-          ? dayjs().utc().startOf("day")
-          : dayjs(start).utc().startOf("day");
-
-        // get number of day in the week and see if it's on the availability
-        const flattenDays = Array.from(
-          new Set(availability.flatMap((a) => ("days" in a ? a.days : [])))
-        ).sort((a, b) => a - b);
+        const startUtc = dayjs(start).utc().startOf("day");
+        const startDateRange = startUtc.isBefore(todayStartUtc) ? todayStartUtc : startUtc;
 
         const endDateRange = dayjs(end).utc().endOf("day");
 
         for (let date = startDateRange; date.isBefore(endDateRange); date = date.add(1, "day")) {
           const dayNumberOnWeek = date.day();
 
-          if (!flattenDays?.includes(dayNumberOnWeek)) {
-            continue; // Skip to the next iteration if day not found in flattenDays
+          if (!availableWeekdays.has(dayNumberOnWeek)) {
+            continue; // Skip to the next iteration if day not found in availability
           }
           // null notes if not to be shown publicly
           if (!showNotePublicly) {
