@@ -741,16 +741,14 @@ export class UserAvailabilityService {
           : dayjs(start).utc().startOf("day");
 
         // get number of day in the week and see if it's on the availability
-        const flattenDays = Array.from(
-          new Set(availability.flatMap((a) => ("days" in a ? a.days : [])))
-        ).sort((a, b) => a - b);
+        const flattenDays = new Set(availability.flatMap((a) => ("days" in a ? a.days : [])));
 
         const endDateRange = dayjs(end).utc().endOf("day");
 
         for (let date = startDateRange; date.isBefore(endDateRange); date = date.add(1, "day")) {
           const dayNumberOnWeek = date.day();
 
-          if (!flattenDays?.includes(dayNumberOnWeek)) {
+          if (!flattenDays.has(dayNumberOnWeek)) {
             continue; // Skip to the next iteration if day not found in flattenDays
           }
           // null notes if not to be shown publicly
@@ -857,9 +855,7 @@ export class UserAvailabilityService {
     }
 
     // Match OOO pattern: get working days from availability
-    const flattenDays = Array.from(new Set(availability.flatMap((a) => ("days" in a ? a.days : [])))).sort(
-      (a, b) => a - b
-    );
+    const flattenDays = new Set(availability.flatMap((a) => ("days" in a ? a.days : [])));
 
     const result: IOutOfOfficeData = {};
 
@@ -867,7 +863,7 @@ export class UserAvailabilityService {
       // Match OOO pattern: use dayjs.utc() to parse date string and get day of week
       const dayOfWeek = dayjs.utc(date).day();
 
-      if (!flattenDays.includes(dayOfWeek)) {
+      if (!flattenDays.has(dayOfWeek)) {
         continue;
       }
 

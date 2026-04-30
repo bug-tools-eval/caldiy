@@ -1,4 +1,6 @@
 //import "server-only";
+
+import process from "node:process";
 import type { LocationObject } from "@calcom/app-store/locations";
 import { getLocationGroupedOptions } from "@calcom/app-store/server";
 import { getEventTypeAppData } from "@calcom/app-store/utils";
@@ -6,13 +8,13 @@ import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-util
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
+import { getTranslation } from "@calcom/i18n/server";
 import { WEBSITE_URL } from "@calcom/lib/constants";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { parseBookingLimit } from "@calcom/lib/intervalLimits/isBookingLimits";
 import { parseDurationLimit } from "@calcom/lib/intervalLimits/isDurationLimits";
 import { parseEventTypeColor } from "@calcom/lib/isEventTypeColor";
 import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
-import { getTranslation } from "@calcom/i18n/server";
 import type { PrismaClient } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole, SchedulingType } from "@calcom/prisma/enums";
@@ -77,36 +79,23 @@ export const getEventTypeById = async ({
   const apps = newMetadata?.apps || {};
   const eventTypeWithParsedMetadata = { ...rawEventType, metadata: newMetadata };
   const userRepo = new UserRepository(prisma);
-  const eventTeamMembershipsWithUserProfile = [];
-  for (const eventTeamMembership of rawEventType.team?.members || []) {
-    eventTeamMembershipsWithUserProfile.push({
+  const eventTeamMembershipsWithUserProfile = await Promise.all(
+    (rawEventType.team?.members || []).map(async (eventTeamMembership) => ({
       ...eventTeamMembership,
-      user: await userRepo.enrichUserWithItsProfile({
-        user: eventTeamMembership.user,
-      }),
-    });
-  }
+      user: await userRepo.enrichUserWithItsProfile({ user: eventTeamMembership.user }),
+    }))
+  );
 
-  const childrenWithUserProfile = [];
-  for (const child of rawEventType.children || []) {
-    childrenWithUserProfile.push({
+  const childrenWithUserProfile = await Promise.all(
+    (rawEventType.children || []).map(async (child) => ({
       ...child,
-      owner: child.owner
-        ? await userRepo.enrichUserWithItsProfile({
-            user: child.owner,
-          })
-        : null,
-    });
-  }
+      owner: child.owner ? await userRepo.enrichUserWithItsProfile({ user: child.owner }) : null,
+    }))
+  );
 
-  const eventTypeUsersWithUserProfile = [];
-  for (const eventTypeUser of rawEventType.users) {
-    eventTypeUsersWithUserProfile.push(
-      await userRepo.enrichUserWithItsProfile({
-        user: eventTypeUser,
-      })
-    );
-  }
+  const eventTypeUsersWithUserProfile = await Promise.all(
+    rawEventType.users.map((eventTypeUser) => userRepo.enrichUserWithItsProfile({ user: eventTypeUser }))
+  );
 
   newMetadata.apps = {
     ...apps,
@@ -141,24 +130,27 @@ export const getEventTypeById = async ({
       : restEventType.owner
         ? await getBookerBaseUrl(currentOrganizationId)
         : WEBSITE_URL,
-    children: childrenWithUserProfile.flatMap((ch) =>
-      ch.owner !== null
-        ? {
-            ...ch,
-            owner: {
-              ...ch.owner,
-              avatar: getUserAvatarUrl(ch.owner),
-              email: ch.owner.email,
-              name: ch.owner.name ?? "",
-              username: ch.owner.username ?? "",
-              membership:
-                restEventType.team?.members.find((tm) => tm.user.id === ch.owner?.id)?.role ||
-                MembershipRole.MEMBER,
-            },
-            created: true,
-          }
-        : []
-    ),
+    children: (() => {
+      const memberRoleByUserId = new Map(
+        (restEventType.team?.members ?? []).map((tm) => [tm.user.id, tm.role])
+      );
+      return childrenWithUserProfile.flatMap((ch) =>
+        ch.owner !== null
+          ? {
+              ...ch,
+              owner: {
+                ...ch.owner,
+                avatar: getUserAvatarUrl(ch.owner),
+                email: ch.owner.email,
+                name: ch.owner.name ?? "",
+                username: ch.owner.username ?? "",
+                membership: memberRoleByUserId.get(ch.owner.id) || MembershipRole.MEMBER,
+              },
+              created: true,
+            }
+          : []
+      );
+    })(),
   };
 
   // backwards compat

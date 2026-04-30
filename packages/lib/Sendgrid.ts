@@ -1,8 +1,8 @@
+import process from "node:process";
+import logger from "@calcom/lib/logger";
 import client from "@sendgrid/client";
 import type { ClientRequest } from "@sendgrid/client/src/request";
 import type { ClientResponse } from "@sendgrid/client/src/response";
-
-import logger from "@calcom/lib/logger";
 
 export type SendgridFieldOptions = [string, string][];
 
@@ -95,7 +95,8 @@ export default class Sendgrid {
     this.log.debug("sync:sendgrid:getCustomFieldsIds:allFields", allFields);
     const customFieldsNames = allFields.custom_fields.map((fie) => fie.name);
     this.log.debug("sync:sendgrid:getCustomFieldsIds:customFieldsNames", customFieldsNames);
-    const customFieldsExist = customFields.map((cusFie) => customFieldsNames.includes(cusFie[0]));
+    const customFieldByName = new Map(allFields.custom_fields.map((fie) => [fie.name, fie]));
+    const customFieldsExist = customFields.map((cusFie) => customFieldByName.has(cusFie[0]));
     this.log.debug("sync:sendgrid:getCustomFieldsIds:customFieldsExist", customFieldsExist);
     return await Promise.all(
       customFieldsExist.map(async (exist, idx) => {
@@ -112,13 +113,10 @@ export default class Sendgrid {
           this.log.debug("sync:sendgrid:getCustomFieldsIds:customField:created", created);
           return created.id;
         } else {
-          const index = customFieldsNames.findIndex((val) => val === customFields[idx][0]);
-          if (index >= 0) {
-            this.log.debug(
-              "sync:sendgrid:getCustomFieldsIds:customField:existed",
-              allFields.custom_fields[index].id
-            );
-            return allFields.custom_fields[index].id;
+          const matchedField = customFieldByName.get(customFields[idx][0]);
+          if (matchedField) {
+            this.log.debug("sync:sendgrid:getCustomFieldsIds:customField:existed", matchedField.id);
+            return matchedField.id;
           } else {
             throw Error("Couldn't find the field index");
           }

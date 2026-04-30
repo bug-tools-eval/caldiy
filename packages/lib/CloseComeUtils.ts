@@ -1,5 +1,5 @@
 import type { CalendarEvent } from "@calcom/types/Calendar";
-
+import type CloseCom from "./CloseCom";
 import type {
   CloseComCustomActivityCreate,
   CloseComCustomActivityFieldGet,
@@ -8,7 +8,6 @@ import type {
   CloseComFieldOptions,
   CloseComLead,
 } from "./CloseCom";
-import type CloseCom from "./CloseCom";
 import { APP_NAME } from "./constants";
 
 export async function getCloseComContactIds(
@@ -106,8 +105,8 @@ export async function getCustomFieldsIds(
   } else {
     relevantFields = allFields.data as CloseComCustomActivityFieldGet["data"];
   }
-  const customFieldsNames = relevantFields.map((fie) => fie.name);
-  const customFieldsExist = customFields.map((cusFie) => customFieldsNames.includes(cusFie[0]));
+  const relevantFieldByName = new Map(relevantFields.map((fie) => [fie.name, fie]));
+  const customFieldsExist = customFields.map((cusFie) => relevantFieldByName.has(cusFie[0]));
   return await Promise.all(
     customFieldsExist.flatMap(async (exist, idx) => {
       if (!exist && entity !== "shared") {
@@ -136,9 +135,9 @@ export async function getCustomFieldsIds(
           }
         }
       } else {
-        const index = customFieldsNames.findIndex((val) => val === customFields[idx][0]);
-        if (index >= 0) {
-          return relevantFields[index].id;
+        const matchedField = relevantFieldByName.get(customFields[idx][0]);
+        if (matchedField) {
+          return matchedField.id;
         } else {
           throw Error("Couldn't find the field index");
         }

@@ -1,3 +1,4 @@
+import process from "node:process";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
@@ -17,9 +18,15 @@ import { orderBy } from "lodash";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
   process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
@@ -59,7 +66,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
   }
 
   const permissionCheckService = new PermissionCheckService();
-  const [teamsWithEventTypeReadPermission, teamsWithEventTypeUpdatePermission] = await Promise.all([
+  const [teamsWithEventTypeReadPermissionArr, teamsWithEventTypeUpdatePermissionArr] = await Promise.all([
     permissionCheckService.getTeamIdsWithPermission({
       userId: user.id,
       permission: "eventType.read",
@@ -71,6 +78,8 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
       fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
     }),
   ]);
+  const teamsWithEventTypeReadPermission = new Set(teamsWithEventTypeReadPermissionArr);
+  const teamsWithEventTypeUpdatePermission = new Set(teamsWithEventTypeUpdatePermissionArr);
 
   const eventTypeRepo = new EventTypeRepository(prisma);
   const [profileMemberships, profileEventTypes] = await Promise.all([
@@ -292,7 +301,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
             },
             metadata: {
               membershipCount: team.members.length,
-              readOnly: !teamsWithEventTypeReadPermission.includes(team.id),
+              readOnly: !teamsWithEventTypeReadPermission.has(team.id),
             },
             eventTypes: eventTypes
               .filter(filterByTeamIds)
@@ -301,7 +310,7 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
                 return res;
               })
               .filter((evType) =>
-                !teamsWithEventTypeUpdatePermission.includes(team.id)
+                !teamsWithEventTypeUpdatePermission.has(team.id)
                   ? evType.schedulingType !== SchedulingType.MANAGED
                   : true
               )
@@ -357,7 +366,10 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
   }
 };
 
+const MEMBERSHIP_ROLE_RANK: Record<string, number> = Object.fromEntries(
+  Object.keys(MembershipRole).map((key, idx) => [key, idx])
+);
+
 export function compareMembership(mship1: MembershipRole, mship2: MembershipRole) {
-  const mshipToNumber = (mship: MembershipRole) => Object.keys(MembershipRole).indexOf(mship);
-  return mshipToNumber(mship1) > mshipToNumber(mship2);
+  return (MEMBERSHIP_ROLE_RANK[mship1] ?? -1) > (MEMBERSHIP_ROLE_RANK[mship2] ?? -1);
 }

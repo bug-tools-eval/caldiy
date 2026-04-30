@@ -185,9 +185,10 @@ export class LuckyUserService implements ILuckyUserService {
 
     const attendeeUserIdAndAtCreatedPair = bookingsOfAvailableUsers.reduce(
       (aggregate: { [userId: number]: Date }, booking) => {
+        const attendeeEmails = new Set(booking.attendees.map((attendee) => attendee.email));
         availableUsers.forEach((user) => {
           if (aggregate[user.id]) return;
-          if (!booking.attendees.map((attendee) => attendee.email).includes(user.email)) return;
+          if (!attendeeEmails.has(user.email)) return;
           if (organizerIdAndAtCreatedPair[user.id] > booking.createdAt) return;
           aggregate[user.id] = booking.createdAt;
         });
@@ -819,6 +820,12 @@ export class LuckyUserService implements ILuckyUserService {
     const orderedUsersSet = new Set<AvailableUser>();
     const perUserBookingsCount: Record<number, number> = {};
 
+    const bookingsCountByUserId = new Map<number, number>();
+    for (const booking of bookingsOfAvailableUsersOfInterval) {
+      if (booking.userId == null) continue;
+      bookingsCountByUserId.set(booking.userId, (bookingsCountByUserId.get(booking.userId) ?? 0) + 1);
+    }
+
     const startTime = performance.now();
     let usersAndTheirBookingShortfalls: {
       id: number;
@@ -853,12 +860,11 @@ export class LuckyUserService implements ILuckyUserService {
       }
 
       orderedUsersSet.add(luckyUser);
-      perUserBookingsCount[luckyUser.id] = bookingsOfAvailableUsersOfInterval.filter(
-        (booking) => booking.userId === luckyUser.id
-      ).length;
+      perUserBookingsCount[luckyUser.id] = bookingsCountByUserId.get(luckyUser.id) ?? 0;
       remainingAvailableUsers = remainingAvailableUsers.filter((user) => user.id !== luckyUser.id);
+      const remainingUserIds = new Set(remainingAvailableUsers.map((user) => user.id));
       bookingsOfRemainingAvailableUsersOfInterval = bookingsOfRemainingAvailableUsersOfInterval.filter(
-        (booking) => remainingAvailableUsers.map((user) => user.id).includes(booking.userId ?? 0)
+        (booking) => remainingUserIds.has(booking.userId ?? 0)
       );
     }
 
