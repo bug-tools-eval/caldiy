@@ -48,10 +48,19 @@ export function processWorkingHours(
   const utcDateTo = dateTo.utc();
   let endTimeToKeyMap: Map<number, number[]> | undefined;
 
-  for (let date = dateFrom.startOf("day"); utcDateTo.isAfter(date); date = date.add(1, "day")) {
-    const fromOffset = dateFrom.startOf("day").utcOffset();
+  // These are loop-invariant: hoist out of the per-day loop.
+  const fromOffset = dateFrom.startOf("day").utcOffset();
+  const startHours = item.startTime.getUTCHours();
+  const startMinutes = item.startTime.getUTCMinutes();
+  const endHours = item.endTime.getUTCHours();
+  const endMinutes = item.endTime.getUTCMinutes();
+  const hasTravelSchedules = travelSchedules.length > 0;
 
-    const adjustedTimezone = getAdjustedTimezone(date, timeZone, travelSchedules);
+  for (let date = dateFrom.startOf("day"); utcDateTo.isAfter(date); date = date.add(1, "day")) {
+    // Skip the per-day travel-schedule scan when none are configured (the typical case).
+    const adjustedTimezone = hasTravelSchedules
+      ? getAdjustedTimezone(date, timeZone, travelSchedules)
+      : timeZone;
 
     const offset = date.tz(adjustedTimezone).utcOffset();
 
@@ -61,11 +70,9 @@ export function processWorkingHours(
       continue;
     }
 
-    let start = dateInTz
-      .add(item.startTime.getUTCHours(), "hours")
-      .add(item.startTime.getUTCMinutes(), "minutes");
+    let start = dateInTz.add(startHours, "hours").add(startMinutes, "minutes");
 
-    let end = dateInTz.add(item.endTime.getUTCHours(), "hours").add(item.endTime.getUTCMinutes(), "minutes");
+    let end = dateInTz.add(endHours, "hours").add(endMinutes, "minutes");
 
     const offsetBeginningOfDay = dayjs(start.format("YYYY-MM-DD hh:mm")).tz(adjustedTimezone).utcOffset();
     const offsetDiff = start.utcOffset() - offsetBeginningOfDay; // there will be 60 min offset on the day day of DST change
