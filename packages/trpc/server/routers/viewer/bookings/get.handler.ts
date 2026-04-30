@@ -47,10 +47,10 @@ type RecurringInfo = {
   recurringEventId: string | null;
   count: number;
   firstDate: Date | null;
-  bookings: {
-    [key: string]: Date[];
-  };
+  bookings: RecurringBookingDates;
 };
+
+type RecurringBookingDates = { [key in BookingStatus]: Date[] };
 
 export const getHandler = async ({ ctx, input }: GetOptions) => {
   // Support both offset-based (list) and cursor-based pagination (calendar)
@@ -680,7 +680,16 @@ export async function getBookings({
 
   let recurringInfo: RecurringInfo[] = [];
   if (shouldFetchRecurringInfo) {
-    recurringInfo = await getRecurringInfo({ prisma, userId: user.id, recurringEventIds });
+    recurringInfo = await getRecurringInfo({
+      prisma,
+      userId: user.id,
+      recurringEventIds,
+      includeBookingDates:
+        bookingListingByStatus.length === 1 &&
+        (bookingListingByStatus[0] === "recurring" ||
+          bookingListingByStatus[0] === "unconfirmed" ||
+          bookingListingByStatus[0] === "cancelled"),
+    });
   }
 
   // Now enrich bookings with relation data. We could have queried the relation data along with the bookings, but that would cause unnecessary queries to the database.
@@ -765,58 +774,57 @@ async function getRecurringInfo({
   prisma,
   userId,
   recurringEventIds,
+  includeBookingDates,
 }: {
   prisma: PrismaClient;
   userId: number;
   recurringEventIds?: string[];
+  includeBookingDates: boolean;
 }): Promise<RecurringInfo[]> {
   let recurringEventIdWhere: { in: string[] } | { not: { equals: null } } = { not: { equals: null } };
   if (recurringEventIds && recurringEventIds.length > 0) {
     recurringEventIdWhere = { in: recurringEventIds };
   }
 
-  const [
-    recurringInfoBasic,
-    recurringInfoExtended,
-    // We need all promises to be successful, so we are not using Promise.allSettled
-  ] = await Promise.all([
-    prisma.booking.groupBy({
-      by: ["recurringEventId"],
-      _min: {
-        startTime: true,
-      },
-      _count: {
-        recurringEventId: true,
-      },
-      where: {
-        recurringEventId: recurringEventIdWhere,
-        userId,
-      },
-    }),
-    prisma.booking.groupBy({
-      by: ["recurringEventId", "status", "startTime"],
-      _min: {
-        startTime: true,
-      },
-      where: {
-        recurringEventId: recurringEventIdWhere,
-        userId,
-      },
-    }),
+  const recurringInfoBasicQuery = prisma.booking.groupBy({
+    by: ["recurringEventId"],
+    _min: {
+      startTime: true,
+    },
+    _count: {
+      recurringEventId: true,
+    },
+    where: {
+      recurringEventId: recurringEventIdWhere,
+      userId,
+    },
+  });
+
+  const recurringInfoExtendedQuery = includeBookingDates
+    ? prisma.booking.groupBy({
+        by: ["recurringEventId", "status", "startTime"],
+        _min: {
+          startTime: true,
+        },
+        where: {
+          recurringEventId: recurringEventIdWhere,
+          userId,
+        },
+      })
+    : Promise.resolve([]);
+
+  const [recurringInfoBasic, recurringInfoExtended] = await Promise.all([
+    recurringInfoBasicQuery,
+    recurringInfoExtendedQuery,
   ]);
 
   return recurringInfoBasic.map((info): RecurringInfo => {
-    const bookings = recurringInfoExtended.reduce(
-      (prev, curr) => {
-        if (curr.recurringEventId === info.recurringEventId) {
-          prev[curr.status].push(curr.startTime);
-        }
-        return prev;
-      },
-      { ACCEPTED: [], CANCELLED: [], REJECTED: [], PENDING: [], AWAITING_HOST: [] } as {
-        [key in BookingStatus]: Date[];
+    const bookings = recurringInfoExtended.reduce((prev, curr) => {
+      if (curr.recurringEventId === info.recurringEventId) {
+        prev[curr.status].push(curr.startTime);
       }
-    );
+      return prev;
+    }, createEmptyRecurringBookingDates());
     return {
       recurringEventId: info.recurringEventId,
       count: info._count.recurringEventId,
@@ -824,6 +832,16 @@ async function getRecurringInfo({
       bookings,
     };
   });
+}
+
+function createEmptyRecurringBookingDates(): RecurringBookingDates {
+  return {
+    [BookingStatus.ACCEPTED]: [],
+    [BookingStatus.CANCELLED]: [],
+    [BookingStatus.REJECTED]: [],
+    [BookingStatus.PENDING]: [],
+    [BookingStatus.AWAITING_HOST]: [],
+  };
 }
 
 type EnrichedUserData = {
