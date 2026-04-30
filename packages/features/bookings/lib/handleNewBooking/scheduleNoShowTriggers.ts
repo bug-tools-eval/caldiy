@@ -40,14 +40,25 @@ const _scheduleNoShowTriggers = async (args: ScheduleNoShowTriggersArgs) => {
   // Add task for automatic no show in cal video
   const noShowPromises: Promise<any>[] = [];
 
-  const subscribersHostsNoShowStarted = await getWebhooks({
+  // Both getWebhooks calls are independent (differ only in triggerEvent); run them
+  // concurrently rather than serialising two round-trips.
+  const baseWebhookQuery = {
     userId: triggerForUser ? organizerUser.id : null,
     eventTypeId,
-    triggerEvent: WebhookTriggerEvents.AFTER_HOSTS_CAL_VIDEO_NO_SHOW,
     teamId,
     orgId,
     oAuthClientId,
-  });
+  };
+  const [subscribersHostsNoShowStarted, subscribersGuestsNoShowStarted] = await Promise.all([
+    getWebhooks({
+      ...baseWebhookQuery,
+      triggerEvent: WebhookTriggerEvents.AFTER_HOSTS_CAL_VIDEO_NO_SHOW,
+    }),
+    getWebhooks({
+      ...baseWebhookQuery,
+      triggerEvent: WebhookTriggerEvents.AFTER_GUESTS_CAL_VIDEO_NO_SHOW,
+    }),
+  ]);
 
   noShowPromises.push(
     ...subscribersHostsNoShowStarted.map((webhook) => {
@@ -69,15 +80,6 @@ const _scheduleNoShowTriggers = async (args: ScheduleNoShowTriggersArgs) => {
       return Promise.resolve();
     })
   );
-
-  const subscribersGuestsNoShowStarted = await getWebhooks({
-    userId: triggerForUser ? organizerUser.id : null,
-    eventTypeId,
-    triggerEvent: WebhookTriggerEvents.AFTER_GUESTS_CAL_VIDEO_NO_SHOW,
-    teamId,
-    orgId,
-    oAuthClientId,
-  });
 
   noShowPromises.push(
     ...subscribersGuestsNoShowStarted.map((webhook) => {
