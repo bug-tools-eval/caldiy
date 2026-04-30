@@ -14,12 +14,27 @@ import type { TUpdateInputSchema } from "./types";
 type PermissionString = string;
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
+type EventTypeUser = EventType["users"][number];
+
+const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
+
+const getEventTypeUsers = (eventType: EventType): EventTypeUser[] => {
+  const users = eventType?.hosts?.length ? eventType.hosts.map((host) => host.user) : eventType.users;
+
+  return users.filter(isDefined);
+};
 
 export const eventOwnerProcedure = authedProcedure
   .input(
@@ -306,28 +321,42 @@ export function ensureEmailOrPhoneNumberIsPresent(fields: TUpdateInputSchema["bo
   }
 }
 
-export const mapEventType = async (eventType: EventType) => ({
-  ...eventType,
-  safeDescription: eventType?.description ? markdownToSafeHTML(eventType.description) : undefined,
-  users: await Promise.all(
-    (eventType?.hosts?.length ? eventType.hosts.map((host) => host.user) : eventType.users).map(async (u) =>
-      new UserRepository(prisma).enrichUserWithItsProfile({
-        user: u,
-      })
-    )
-  ),
-  metadata: eventType.metadata ? EventTypeMetaDataSchema.parse(eventType.metadata) : null,
-  children: await Promise.all(
-    (eventType.children || []).map(async (c) => ({
-      ...c,
-      users: await Promise.all(
-        c.users.map(
-          async (u) =>
-            await new UserRepository(prisma).enrichUserWithItsProfile({
-              user: u,
-            })
-        )
-      ),
-    }))
-  ),
-});
+export const mapEventTypes = async (eventTypes: EventType[]) => {
+  const usersById = new Map<number, EventTypeUser>();
+
+  eventTypes.forEach((eventType) => {
+    getEventTypeUsers(eventType).forEach((user) => {
+      usersById.set(user.id, user);
+    });
+
+    (eventType.children || []).forEach((child) => {
+      child.users.forEach((user) => {
+        usersById.set(user.id, user);
+      });
+    });
+  });
+
+  const enrichedUsers = await new UserRepository(prisma).enrichUsersWithTheirProfiles(
+    Array.from(usersById.values())
+  );
+  const enrichedUsersById = new Map(enrichedUsers.map((user) => [user.id, user]));
+
+  return eventTypes.map((eventType) => ({
+    ...eventType,
+    safeDescription: eventType?.description ? markdownToSafeHTML(eventType.description) : undefined,
+    users: getEventTypeUsers(eventType)
+      .map((user) => enrichedUsersById.get(user.id))
+      .filter(isDefined),
+    metadata: eventType.metadata ? EventTypeMetaDataSchema.parse(eventType.metadata) : null,
+    children: (eventType.children || []).map((child) => ({
+      ...child,
+      users: child.users.map((user) => enrichedUsersById.get(user.id)).filter(isDefined),
+    })),
+  }));
+};
+
+export const mapEventType = async (eventType: EventType) => {
+  const [mappedEventType] = await mapEventTypes([eventType]);
+
+  return mappedEventType;
+};

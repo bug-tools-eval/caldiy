@@ -4,10 +4,8 @@ import type { DateRange } from "@calcom/features/schedules/lib/date-ranges";
 import { buildDateRanges } from "@calcom/features/schedules/lib/date-ranges";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { prisma } from "@calcom/prisma";
-import { Prisma } from "@calcom/prisma/client";
-
+import { type Availability, Prisma } from "@calcom/prisma/client";
 import { TRPCError } from "@trpc/server";
-
 import type { TrpcSessionUser } from "../../../../types";
 import type { TListTeamAvailaiblityScheme } from "./listTeamAvailability.schema";
 
@@ -91,8 +89,17 @@ async function getTeamMembers({
 }
 
 type Member = Awaited<ReturnType<typeof getTeamMembers>>[number];
+type DefaultSchedule = {
+  availability: Availability[];
+  timeZone: string | null;
+};
 
-async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
+function buildMember(
+  member: Member,
+  dateFrom: Dayjs,
+  dateTo: Dayjs,
+  defaultSchedule: DefaultSchedule | null
+) {
   if (!member.user.defaultScheduleId) {
     return {
       id: member.user.id,
@@ -107,17 +114,13 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
     };
   }
 
-  const schedule = await prisma.schedule.findUnique({
-    where: { id: member.user.defaultScheduleId },
-    select: { availability: true, timeZone: true },
-  });
-  const timeZone = schedule?.timeZone || member.user.timeZone;
+  const timeZone = defaultSchedule?.timeZone || member.user.timeZone;
 
   const { dateRanges } = buildDateRanges({
     dateFrom,
     dateTo,
     timeZone,
-    availability: schedule?.availability ?? [],
+    availability: defaultSchedule?.availability ?? [],
     travelSchedules: member.user.travelSchedules.map((schedule) => {
       return {
         startDate: dayjs(schedule.startDate),
@@ -140,6 +143,29 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
     defaultScheduleId: member.user.defaultScheduleId ?? -1,
     dateRanges,
   };
+}
+
+async function getDefaultSchedulesById(defaultScheduleIds: number[]) {
+  const uniqueDefaultScheduleIds = Array.from(new Set(defaultScheduleIds));
+
+  if (uniqueDefaultScheduleIds.length === 0) {
+    return new Map<number, DefaultSchedule>();
+  }
+
+  const schedules = await prisma.schedule.findMany({
+    where: {
+      id: {
+        in: uniqueDefaultScheduleIds,
+      },
+    },
+    select: {
+      id: true,
+      availability: true,
+      timeZone: true,
+    },
+  });
+
+  return new Map(schedules.map((schedule) => [schedule.id, schedule]));
 }
 
 async function getInfoForAllTeams({ ctx, input }: GetOptions) {
@@ -239,7 +265,7 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
     }
   }
 
-  let nextCursor: typeof cursor | undefined = undefined;
+  let nextCursor: typeof cursor | undefined;
   if (teamMembers && teamMembers.length > limit) {
     const nextItem = teamMembers.pop();
     nextCursor = nextItem?.id;
@@ -247,10 +273,18 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
 
   const dateFrom = dayjs(input.startDate).tz(input.loggedInUsersTz).subtract(1, "day");
   const dateTo = dayjs(input.endDate).tz(input.loggedInUsersTz).add(1, "day");
+  const defaultSchedulesById = await getDefaultSchedulesById(
+    teamMembers.flatMap((member) => (member.user.defaultScheduleId ? [member.user.defaultScheduleId] : []))
+  );
 
-  const buildMembers = teamMembers?.map((member) => buildMember(member, dateFrom, dateTo));
-
-  const members = await Promise.all(buildMembers);
+  const members = teamMembers.map((member) =>
+    buildMember(
+      member,
+      dateFrom,
+      dateTo,
+      member.user.defaultScheduleId ? (defaultSchedulesById.get(member.user.defaultScheduleId) ?? null) : null
+    )
+  );
 
   let belongsToTeam = true;
 
