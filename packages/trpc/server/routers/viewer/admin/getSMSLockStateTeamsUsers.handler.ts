@@ -47,14 +47,34 @@ const getSMSLockStateTeamsUsers = async (_opts: GetOptions) => {
     }),
   ]);
 
+  const lockedUsers: typeof users = [];
+  const reviewNeededUsers: typeof users = [];
+  for (const user of users) {
+    if (user.smsLockState === SMSLockState.LOCKED) {
+      lockedUsers.push(user);
+    } else if (user.smsLockState === SMSLockState.REVIEW_NEEDED) {
+      reviewNeededUsers.push(user);
+    }
+  }
+
+  const lockedTeams: typeof teams = [];
+  const reviewNeededTeams: typeof teams = [];
+  for (const team of teams) {
+    if (team.smsLockState === SMSLockState.LOCKED) {
+      lockedTeams.push(team);
+    } else if (team.smsLockState === SMSLockState.REVIEW_NEEDED) {
+      reviewNeededTeams.push(team);
+    }
+  }
+
   const resultObj = {
     users: {
-      locked: users.filter((user) => user.smsLockState === SMSLockState.LOCKED),
-      reviewNeeded: users.filter((user) => user.smsLockState === SMSLockState.REVIEW_NEEDED),
+      locked: lockedUsers,
+      reviewNeeded: reviewNeededUsers,
     },
     teams: {
-      locked: teams.filter((team) => team.smsLockState === SMSLockState.LOCKED),
-      reviewNeeded: teams.filter((team) => team.smsLockState === SMSLockState.REVIEW_NEEDED),
+      locked: lockedTeams,
+      reviewNeeded: reviewNeededTeams,
     },
   };
 

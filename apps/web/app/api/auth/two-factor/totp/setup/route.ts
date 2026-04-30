@@ -17,7 +17,6 @@ import { authenticator } from "otplib";
 import qrcode from "qrcode";
 
 async function postHandler(req: NextRequest) {
-  const body = await parseRequestData(req);
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
 
   if (!session) {
@@ -71,6 +70,8 @@ async function postHandler(req: NextRequest) {
     console.error("Missing encryption key; cannot proceed with two factor setup.");
     return NextResponse.json({ error: ErrorCode.InternalServerError }, { status: 500 });
   }
+
+  const body = await parseRequestData(req);
 
   const isCorrectPassword = await verifyPassword(body.password, user.password.hash);
   if (!isCorrectPassword) {

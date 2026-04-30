@@ -13,7 +13,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 async function postHandler(req: NextRequest) {
-  const body = await parseRequestData(req);
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
 
   if (!session) {
@@ -62,6 +61,8 @@ async function postHandler(req: NextRequest) {
     );
     return NextResponse.json({ error: ErrorCode.InternalServerError }, { status: 500 });
   }
+
+  const body = await parseRequestData(req);
 
   const isValidToken = totpAuthenticatorCheck(body.code, secret);
   if (!isValidToken) {

@@ -12,30 +12,31 @@ type GetOptions = {
 
 const listPaginatedHandler = async ({ input }: GetOptions) => {
   const { cursor, limit, searchTerm } = input;
+  const normalizedSearchTerm = searchTerm?.toLowerCase();
 
   let searchFilters: Prisma.UserWhereInput = {};
   const bothLockedAndUnlockedWhere = { OR: [{ locked: false }, { locked: true }] };
 
-  if (searchTerm) {
+  if (normalizedSearchTerm) {
     searchFilters = {
       // To bypass the excludeLockedUsersExtension
       AND: bothLockedAndUnlockedWhere,
       OR: [
         {
           email: {
-            contains: searchTerm.toLowerCase(),
+            contains: normalizedSearchTerm,
           },
         },
         {
           username: {
-            contains: searchTerm.toLocaleLowerCase(),
+            contains: normalizedSearchTerm,
           },
         },
         {
           profiles: {
             some: {
               username: {
-                contains: searchTerm.toLowerCase(),
+                contains: normalizedSearchTerm,
               },
             },
           },

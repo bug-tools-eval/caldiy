@@ -15,7 +15,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 async function handler(req: NextRequest) {
-  const body = await parseRequestData(req);
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
 
   if (!session) {
@@ -60,6 +59,8 @@ async function handler(req: NextRequest) {
   if (!user.twoFactorEnabled) {
     return NextResponse.json({ message: "Two factor disabled" });
   }
+
+  const body = await parseRequestData(req);
 
   if (user.password?.hash && user.identityProvider === IdentityProvider.CAL) {
     const isCorrectPassword = await verifyPassword(body.password, user.password.hash);
