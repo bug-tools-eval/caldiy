@@ -312,30 +312,20 @@ export async function handleConfirmation(args: {
   const userId = booking.userId;
 
   try {
-    const subscribersBookingCreated = await getWebhooks({
+    const baseWebhookQuery = {
       userId,
       eventTypeId: booking.eventTypeId,
-      triggerEvent: WebhookTriggerEvents.BOOKING_CREATED,
       teamId: null,
       orgId: null,
       oAuthClientId: platformClientParams?.platformClientId,
-    });
-    const subscribersMeetingStarted = await getWebhooks({
-      userId,
-      eventTypeId: booking.eventTypeId,
-      triggerEvent: WebhookTriggerEvents.MEETING_STARTED,
-      teamId: null,
-      orgId: null,
-      oAuthClientId: platformClientParams?.platformClientId,
-    });
-    const subscribersMeetingEnded = await getWebhooks({
-      userId,
-      eventTypeId: booking.eventTypeId,
-      triggerEvent: WebhookTriggerEvents.MEETING_ENDED,
-      teamId: null,
-      orgId: null,
-      oAuthClientId: platformClientParams?.platformClientId,
-    });
+    };
+    const [subscribersBookingCreated, subscribersMeetingStarted, subscribersMeetingEnded] = await Promise.all(
+      [
+        getWebhooks({ ...baseWebhookQuery, triggerEvent: WebhookTriggerEvents.BOOKING_CREATED }),
+        getWebhooks({ ...baseWebhookQuery, triggerEvent: WebhookTriggerEvents.MEETING_STARTED }),
+        getWebhooks({ ...baseWebhookQuery, triggerEvent: WebhookTriggerEvents.MEETING_ENDED }),
+      ]
+    );
 
     const scheduleTriggerPromises: Promise<unknown>[] = [];
 
