@@ -665,8 +665,14 @@ export async function getBookings({
         .execute()
     : [];
 
+  const canRenderRecurringInfo =
+    bookingListingByStatus.length === 1 &&
+    (bookingListingByStatus[0] === "recurring" ||
+      bookingListingByStatus[0] === "unconfirmed" ||
+      bookingListingByStatus[0] === "cancelled");
+
   const shouldFetchRecurringInfo =
-    bookingListingByStatus.length > 1 || plainBookings.some((booking) => booking.recurringEventId);
+    canRenderRecurringInfo && plainBookings.some((booking) => booking.recurringEventId);
   let recurringEventIds: string[] | undefined;
   if (bookingListingByStatus.length === 1) {
     recurringEventIds = Array.from(
@@ -684,11 +690,7 @@ export async function getBookings({
       prisma,
       userId: user.id,
       recurringEventIds,
-      includeBookingDates:
-        bookingListingByStatus.length === 1 &&
-        (bookingListingByStatus[0] === "recurring" ||
-          bookingListingByStatus[0] === "unconfirmed" ||
-          bookingListingByStatus[0] === "cancelled"),
+      includeBookingDates: canRenderRecurringInfo,
     });
   }
 
