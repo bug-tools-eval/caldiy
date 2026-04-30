@@ -1,8 +1,22 @@
+import process from "node:process";
 import { verifyCodeUnAuthenticated } from "@calcom/features/auth/lib/verifyCodeUnAuthenticated";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { ErrorWithCode } from "@calcom/lib/errors";
 import { extractBaseEmail } from "@calcom/lib/extract-base-email";
 import prisma from "@calcom/prisma";
+
+// Cache the blacklist Set keyed by the raw env-var value so that we don't
+// re-split + re-lowercase a potentially large list on every booking. Test
+// environments mutate process.env at runtime, so we still honour changes.
+let cachedBlacklistEnv: string | undefined;
+let cachedBlacklistSet: ReadonlySet<string> = new Set();
+const getBlacklistedGuestEmailSet = (): ReadonlySet<string> => {
+  const raw = process.env.BLACKLISTED_GUEST_EMAILS;
+  if (raw === cachedBlacklistEnv) return cachedBlacklistSet;
+  cachedBlacklistEnv = raw;
+  cachedBlacklistSet = new Set(raw ? raw.split(",").map((e) => e.toLowerCase()) : []);
+  return cachedBlacklistSet;
+};
 
 export const checkIfBookerEmailIsBlocked = async ({
   bookerEmail,
@@ -17,13 +31,7 @@ export const checkIfBookerEmailIsBlocked = async ({
 }) => {
   const baseEmail = extractBaseEmail(bookerEmail);
 
-  const blacklistedGuestEmails = process.env.BLACKLISTED_GUEST_EMAILS
-    ? process.env.BLACKLISTED_GUEST_EMAILS.split(",")
-    : [];
-
-  const blacklistedByEnv = blacklistedGuestEmails.find(
-    (guestEmail: string) => guestEmail.toLowerCase() === baseEmail.toLowerCase()
-  );
+  const blacklistedByEnv = getBlacklistedGuestEmailSet().has(baseEmail.toLowerCase());
 
   const user = await prisma.user.findFirst({
     where: {
