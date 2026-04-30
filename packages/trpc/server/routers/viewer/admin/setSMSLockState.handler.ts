@@ -1,8 +1,6 @@
 import { prisma } from "@calcom/prisma";
 import { SMSLockState } from "@calcom/prisma/enums";
-
 import { TRPCError } from "@trpc/server";
-
 import type { TrpcSessionUser } from "../../../types";
 import type { TSetSMSLockState } from "./setSMSLockState.schema";
 
@@ -16,7 +14,7 @@ type GetOptions = {
 const setSMSLockState = async ({ input }: GetOptions) => {
   const { userId, username, teamId, teamSlug, lock } = input;
   if (userId) {
-    const userToUpdate = await prisma.user.findUnique({ where: { id: userId } });
+    const userToUpdate = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
     if (!userToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "User not found" });
     const updatedUser = await prisma.user.update({
       where: {
@@ -26,6 +24,9 @@ const setSMSLockState = async ({ input }: GetOptions) => {
         smsLockState: lock ? SMSLockState.LOCKED : SMSLockState.UNLOCKED,
         smsLockReviewedByAdmin: true,
       },
+      select: {
+        username: true,
+      },
     });
     return { name: updatedUser.username, locked: lock };
   } else if (username) {
@@ -33,6 +34,9 @@ const setSMSLockState = async ({ input }: GetOptions) => {
       where: {
         username,
         profiles: { none: {} },
+      },
+      select: {
+        id: true,
       },
     });
     if (!userToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "User not found" });
@@ -44,12 +48,18 @@ const setSMSLockState = async ({ input }: GetOptions) => {
         smsLockState: lock ? SMSLockState.LOCKED : SMSLockState.UNLOCKED,
         smsLockReviewedByAdmin: true,
       },
+      select: {
+        username: true,
+      },
     });
     return { name: updatedUser.username, locked: lock };
   } else if (teamId) {
     const teamToUpdate = await prisma.team.findUnique({
       where: {
         id: teamId,
+      },
+      select: {
+        id: true,
       },
     });
     if (!teamToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "Team not found" });
@@ -61,6 +71,9 @@ const setSMSLockState = async ({ input }: GetOptions) => {
         smsLockState: lock ? SMSLockState.LOCKED : SMSLockState.UNLOCKED,
         smsLockReviewedByAdmin: true,
       },
+      select: {
+        slug: true,
+      },
     });
     return { name: updatedTeam.slug, locked: lock };
   } else if (teamSlug) {
@@ -68,6 +81,9 @@ const setSMSLockState = async ({ input }: GetOptions) => {
       where: {
         slug: teamSlug,
         parentId: null,
+      },
+      select: {
+        id: true,
       },
     });
     if (!teamToUpdate) throw new TRPCError({ code: "BAD_REQUEST", message: "Team not found" });
@@ -78,6 +94,9 @@ const setSMSLockState = async ({ input }: GetOptions) => {
       data: {
         smsLockState: lock ? SMSLockState.LOCKED : SMSLockState.UNLOCKED,
         smsLockReviewedByAdmin: true,
+      },
+      select: {
+        slug: true,
       },
     });
     return { name: updatedTeam.slug, locked: lock };

@@ -10,25 +10,28 @@ type BookingUnconfirmedCountOptions = {
 
 export const bookingUnconfirmedCountHandler = async ({ ctx }: BookingUnconfirmedCountOptions) => {
   const { user } = ctx;
-  const count = await prisma.booking.count({
-    where: {
-      status: BookingStatus.PENDING,
-      userId: user.id,
-      endTime: { gt: new Date() },
-    },
-  });
-  const recurringGrouping = await prisma.booking.groupBy({
-    by: ["recurringEventId"],
-    _count: {
-      recurringEventId: true,
-    },
-    where: {
-      recurringEventId: { not: { equals: null } },
-      status: { equals: "PENDING" },
-      userId: user.id,
-      endTime: { gt: new Date() },
-    },
-  });
+  const now = new Date();
+  const [count, recurringGrouping] = await Promise.all([
+    prisma.booking.count({
+      where: {
+        status: BookingStatus.PENDING,
+        userId: user.id,
+        endTime: { gt: now },
+      },
+    }),
+    prisma.booking.groupBy({
+      by: ["recurringEventId"],
+      _count: {
+        recurringEventId: true,
+      },
+      where: {
+        recurringEventId: { not: { equals: null } },
+        status: { equals: "PENDING" },
+        userId: user.id,
+        endTime: { gt: now },
+      },
+    }),
+  ]);
   return recurringGrouping.reduce((prev, current) => {
     // recurringEventId is the total number of recurring instances for a booking
     // we need to subtract all but one, to represent a single recurring booking

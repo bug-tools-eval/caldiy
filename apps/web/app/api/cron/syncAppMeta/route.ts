@@ -1,17 +1,75 @@
-import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
-
+import process from "node:process";
 import { getAppWithMetadata } from "@calcom/app-store/_appRegistry";
 import { shouldEnableApp } from "@calcom/app-store/_utils/validateAppKeys";
 import logger from "@calcom/lib/logger";
 import { prisma } from "@calcom/prisma";
 import type { AppCategories, Prisma } from "@calcom/prisma/client";
+import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 const isDryRun = process.env.CRON_ENABLE_APP_SYNC !== "true";
 const log = logger.getSubLogger({
   prefix: ["[api/cron/syncAppMeta]", ...(isDryRun ? ["(dry-run)"] : [])],
 });
+
+const appSyncSelect = {
+  slug: true,
+  dirName: true,
+  keys: true,
+  categories: true,
+  enabled: true,
+} satisfies Prisma.AppSelect;
+
+type AppSyncPayload = Prisma.AppGetPayload<{ select: typeof appSyncSelect }>;
+
+async function syncDbApp(dbApp: AppSyncPayload) {
+  const app = await getAppWithMetadata(dbApp);
+  const updates: Prisma.AppUpdateManyMutationInput = {};
+
+  if (!app) {
+    log.warn(`💀 App ${dbApp.slug} (${dbApp.dirName}) no longer exists.`);
+    return;
+  }
+
+  // Check for any changes in the app categories (tolerates changes in ordering)
+  const appCategories = new Set(app.categories);
+  if (
+    dbApp.categories.length !== app.categories.length ||
+    !dbApp.categories.every((category) => appCategories.has(category))
+  ) {
+    updates["categories"] = app.categories as AppCategories[];
+  }
+
+  if (dbApp.dirName !== (app.dirName ?? app.slug)) {
+    updates["dirName"] = app.dirName ?? app.slug;
+  }
+
+  // Ensure app is only enabled if it has valid keys (or doesn't require keys)
+  const shouldBeEnabled = shouldEnableApp(dbApp.dirName, dbApp.keys);
+  if (dbApp.enabled !== shouldBeEnabled) {
+    updates["enabled"] = shouldBeEnabled;
+    if (!shouldBeEnabled && dbApp.enabled) {
+      log.warn(
+        `⚠️ Disabling app ${dbApp.slug} - required keys are missing or invalid. Please configure keys in admin settings.`
+      );
+    }
+  }
+
+  const updateFields = Object.keys(updates);
+  if (updateFields.length > 0) {
+    log.info(`🔨 Updating app ${dbApp.slug} with ${updateFields.join(", ")}`);
+    if (!isDryRun) {
+      await prisma.app.update({
+        where: { slug: dbApp.slug },
+        data: updates,
+      });
+    }
+    return;
+  }
+
+  log.info(`✅ App ${dbApp.slug} is up-to-date and correct`);
+}
 
 /**
  * syncAppMeta makes sure any app metadata that has been replicated into the database
@@ -26,52 +84,8 @@ async function postHandler(request: NextRequest) {
 
   log.info(`🧐 Checking DB apps are in-sync with app metadata`);
 
-  const dbApps = await prisma.app.findMany();
-
-  for await (const dbApp of dbApps) {
-    const app = await getAppWithMetadata(dbApp);
-    const updates: Prisma.AppUpdateManyMutationInput = {};
-
-    if (!app) {
-      log.warn(`💀 App ${dbApp.slug} (${dbApp.dirName}) no longer exists.`);
-      continue;
-    }
-
-    // Check for any changes in the app categories (tolerates changes in ordering)
-    if (
-      dbApp.categories.length !== app.categories.length ||
-      !dbApp.categories.every((category) => app.categories.includes(category))
-    ) {
-      updates["categories"] = app.categories as AppCategories[];
-    }
-
-    if (dbApp.dirName !== (app.dirName ?? app.slug)) {
-      updates["dirName"] = app.dirName ?? app.slug;
-    }
-
-    // Ensure app is only enabled if it has valid keys (or doesn't require keys)
-    const shouldBeEnabled = shouldEnableApp(dbApp.dirName, dbApp.keys);
-    if (dbApp.enabled !== shouldBeEnabled) {
-      updates["enabled"] = shouldBeEnabled;
-      if (!shouldBeEnabled && dbApp.enabled) {
-        log.warn(
-          `⚠️ Disabling app ${dbApp.slug} - required keys are missing or invalid. Please configure keys in admin settings.`
-        );
-      }
-    }
-
-    if (Object.keys(updates).length > 0) {
-      log.info(`🔨 Updating app ${dbApp.slug} with ${Object.keys(updates).join(", ")}`);
-      if (!isDryRun) {
-        await prisma.app.update({
-          where: { slug: dbApp.slug },
-          data: updates,
-        });
-      }
-    } else {
-      log.info(`✅ App ${dbApp.slug} is up-to-date and correct`);
-    }
-  }
+  const dbApps = await prisma.app.findMany({ select: appSyncSelect });
+  await Promise.all(dbApps.map(syncDbApp));
 
   return NextResponse.json({ ok: true });
 }
