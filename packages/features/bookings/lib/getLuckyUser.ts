@@ -185,9 +185,10 @@ export class LuckyUserService implements ILuckyUserService {
 
     const attendeeUserIdAndAtCreatedPair = bookingsOfAvailableUsers.reduce(
       (aggregate: { [userId: number]: Date }, booking) => {
+        const attendeeEmails = new Set(booking.attendees.map((attendee) => attendee.email));
         availableUsers.forEach((user) => {
           if (aggregate[user.id]) return;
-          if (!booking.attendees.map((attendee) => attendee.email).includes(user.email)) return;
+          if (!attendeeEmails.has(user.email)) return;
           if (organizerIdAndAtCreatedPair[user.id] > booking.createdAt) return;
           aggregate[user.id] = booking.createdAt;
         });
@@ -374,20 +375,30 @@ export class LuckyUserService implements ILuckyUserService {
       return totalCalibration;
     }, 0);
 
+    const attributeWeightByUserId = attributeWeights
+      ? new Map(attributeWeights.map((w) => [w.userId, w.weight]))
+      : null;
+    const calibrationByUserId = new Map<number, number>();
+    for (const host of allHostsWithCalibration) {
+      calibrationByUserId.set(host.userId, host.calibration);
+    }
+    const bookingsWithAttendeeEmails = bookingsOfAvailableUsersOfInterval.map((booking) => ({
+      booking,
+      attendeeEmails: new Set(booking.attendees.map((a) => a.email)),
+    }));
+
     const usersWithBookingShortfalls = availableUsers.map((user) => {
       let userWeight = user.weight ?? 100;
-      if (attributeWeights) {
-        userWeight = attributeWeights.find((userWeight) => userWeight.userId === user.id)?.weight ?? 100;
+      if (attributeWeightByUserId) {
+        userWeight = attributeWeightByUserId.get(user.id) ?? 100;
       }
       const targetPercentage = userWeight / totalWeight;
-      const userBookings = bookingsOfAvailableUsersOfInterval.filter(
-        (booking) =>
-          booking.userId === user.id || booking.attendees.some((attendee) => attendee.email === user.email)
+      const userBookings = bookingsWithAttendeeEmails.filter(
+        ({ booking, attendeeEmails }) => booking.userId === user.id || attendeeEmails.has(user.email)
       );
 
       const targetNumberOfBookings = (allBookings.length + totalCalibration) * targetPercentage;
-      const userCalibration =
-        allHostsWithCalibration.find((host) => host.userId === user.id)?.calibration ?? 0;
+      const userCalibration = calibrationByUserId.get(user.id) ?? 0;
 
       const bookingShortfall = targetNumberOfBookings - (userBookings.length + userCalibration);
 
@@ -853,12 +864,15 @@ export class LuckyUserService implements ILuckyUserService {
       }
 
       orderedUsersSet.add(luckyUser);
-      perUserBookingsCount[luckyUser.id] = bookingsOfAvailableUsersOfInterval.filter(
-        (booking) => booking.userId === luckyUser.id
-      ).length;
+      let bookingsForLuckyUserCount = 0;
+      for (const booking of bookingsOfAvailableUsersOfInterval) {
+        if (booking.userId === luckyUser.id) bookingsForLuckyUserCount++;
+      }
+      perUserBookingsCount[luckyUser.id] = bookingsForLuckyUserCount;
       remainingAvailableUsers = remainingAvailableUsers.filter((user) => user.id !== luckyUser.id);
+      const remainingUserIds = new Set(remainingAvailableUsers.map((user) => user.id));
       bookingsOfRemainingAvailableUsersOfInterval = bookingsOfRemainingAvailableUsersOfInterval.filter(
-        (booking) => remainingAvailableUsers.map((user) => user.id).includes(booking.userId ?? 0)
+        (booking) => remainingUserIds.has(booking.userId ?? 0)
       );
     }
 
