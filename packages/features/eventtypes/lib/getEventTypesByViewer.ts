@@ -1,3 +1,4 @@
+import process from "node:process";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { MembershipRepository } from "@calcom/features/membership/repositories/MembershipRepository";
@@ -17,9 +18,15 @@ import { orderBy } from "lodash";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 const getBookerBaseUrl = async (_orgSlug?: string | number | null): Promise<string> =>
   process.env.NEXT_PUBLIC_WEBAPP_URL || "https://app.cal.com";
@@ -127,45 +134,84 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
   );
 
   type UserEventTypes = (typeof profileEventTypes)[number];
+  type EventTypeUser = UserEventTypes["users"][number];
 
-  const mapEventType = async (eventType: UserEventTypes) => {
-    const userRepo = new UserRepository(prisma);
+  const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
+
+  const getEventTypeUsers = (eventType: UserEventTypes): EventTypeUser[] => {
     const eventTypeUsers = eventType?.hosts?.length
       ? eventType.hosts.map((host) => host.user)
       : eventType.users;
-    const enrichedUsers = await userRepo.enrichUsersWithTheirProfiles(eventTypeUsers);
 
-    const children = eventType.children || [];
-    const allChildUsers = children.flatMap((c) => c.users);
-    const enrichedAllChildUsers = await userRepo.enrichUsersWithTheirProfiles(allChildUsers);
-    const enrichedUsersMap = new Map(enrichedAllChildUsers.map((user) => [user.id, user]));
-
-    const enrichedChildren = children.map((c) => ({
-      ...c,
-      users: c.users.map((user) => enrichedUsersMap.get(user.id)).filter((user) => !!user),
-    }));
-
-    return {
-      ...eventType,
-      safeDescription: eventType?.description ? markdownToSafeHTML(eventType.description) : undefined,
-      users: enrichedUsers,
-      metadata: eventType.metadata ? eventTypeMetaDataSchemaWithUntypedApps.parse(eventType.metadata) : null,
-      children: enrichedChildren,
-    };
+    return eventTypeUsers.filter(isDefined);
   };
 
-  const userEventTypes = (await Promise.all(profileEventTypes.map(mapEventType))).filter((eventType) => {
-    const isAChildEvent = eventType.parentId;
-    if (!isAChildEvent) {
-      return true;
-    }
-    // A child event only has one user
-    const childEventAssignee = eventType.users[0];
-    if (!childEventAssignee || childEventAssignee.id !== user.id) {
+  const mapEventTypes = async (eventTypes: UserEventTypes[]) => {
+    const userRepo = new UserRepository(prisma);
+    const usersById = new Map<number, EventTypeUser>();
+
+    eventTypes.forEach((eventType) => {
+      getEventTypeUsers(eventType).forEach((user) => {
+        usersById.set(user.id, user);
+      });
+
+      (eventType.children || []).forEach((child) => {
+        child.users.forEach((user) => {
+          usersById.set(user.id, user);
+        });
+      });
+    });
+
+    const enrichedUsers = await userRepo.enrichUsersWithTheirProfiles(Array.from(usersById.values()));
+    const enrichedUsersById = new Map(enrichedUsers.map((user) => [user.id, user]));
+
+    return eventTypes.map((eventType) => ({
+      ...eventType,
+      safeDescription: eventType?.description ? markdownToSafeHTML(eventType.description) : undefined,
+      users: getEventTypeUsers(eventType)
+        .map((user) => enrichedUsersById.get(user.id))
+        .filter(isDefined),
+      metadata: eventType.metadata ? eventTypeMetaDataSchemaWithUntypedApps.parse(eventType.metadata) : null,
+      children: (eventType.children || []).map((child) => ({
+        ...child,
+        users: child.users.map((user) => enrichedUsersById.get(user.id)).filter(isDefined),
+      })),
+    }));
+  };
+
+  type MappedEventType = Awaited<ReturnType<typeof mapEventTypes>>[number];
+
+  const teamMembershipsForGroups = memberships.filter((mmship) => {
+    if (mmship.team.isOrganization) {
       return false;
     }
-    return true;
+    if (!filters || !hasFilter(filters)) {
+      return true;
+    }
+    return filters?.teamIds?.includes(mmship?.team?.id || 0) ?? false;
   });
+
+  const mappedEventTypes = await mapEventTypes([
+    ...profileEventTypes,
+    ...teamMembershipsForGroups.flatMap((membership) => membership.team.eventTypes),
+  ]);
+  const mappedEventTypesById = new Map(mappedEventTypes.map((eventType) => [eventType.id, eventType]));
+
+  const userEventTypes = profileEventTypes
+    .map((eventType) => mappedEventTypesById.get(eventType.id))
+    .filter(isDefined)
+    .filter((eventType) => {
+      const isAChildEvent = eventType.parentId;
+      if (!isAChildEvent) {
+        return true;
+      }
+      // A child event only has one user
+      const childEventAssignee = eventType.users[0];
+      if (!childEventAssignee || childEventAssignee.id !== user.id) {
+        return false;
+      }
+      return true;
+    });
 
   type EventTypeGroup = {
     teamId?: number | null;
@@ -228,13 +274,13 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
     membershipRole: membership.role,
   }));
 
-  const filterByTeamIds = async (eventType: Awaited<ReturnType<typeof mapEventType>>) => {
+  const filterByTeamIds = (eventType: MappedEventType) => {
     if (!filters || !hasFilter(filters)) {
       return true;
     }
     return filters?.teamIds?.includes(eventType?.teamId || 0) ?? false;
   };
-  const filterBySchedulingTypes = (evType: Awaited<ReturnType<typeof mapEventType>>) => {
+  const filterBySchedulingTypes = (evType: MappedEventType) => {
     if (!filters || !hasFilter(filters) || !filters.schedulingTypes) {
       return true;
     }
@@ -246,69 +292,59 @@ export const getEventTypesByViewer = async (user: User, filters?: Filters) => {
 
   eventTypeGroups = ([] as EventTypeGroup[]).concat(
     eventTypeGroups,
-    await Promise.all(
-      memberships
-        .filter((mmship) => {
-          if (mmship.team.isOrganization) {
-            return false;
-          } else {
-            if (!filters || !hasFilter(filters)) {
-              return true;
-            }
-            return filters?.teamIds?.includes(mmship?.team?.id || 0) ?? false;
-          }
-        })
-        .map(async (membership) => {
-          const orgMembership = teamMemberships.find(
-            (teamM) => teamM.teamId === membership.team.parentId
-          )?.membershipRole;
+    teamMembershipsForGroups.map((membership) => {
+      const orgMembership = teamMemberships.find(
+        (teamM) => teamM.teamId === membership.team.parentId
+      )?.membershipRole;
 
-          const team = {
-            ...membership.team,
-            metadata: teamMetadataSchema.parse(membership.team.metadata),
-          };
+      const team = {
+        ...membership.team,
+        metadata: teamMetadataSchema.parse(membership.team.metadata),
+      };
 
-          let slug;
+      let slug: string | null = null;
+      if (team.slug) {
+        // In an Org, a team can be accessed without /team prefix as well as with /team prefix
+        slug = team.parentId ? team.slug : `team/${team.slug}`;
+      }
 
-          // In an Org, a team can be accessed without /team prefix as well as with /team prefix
-          slug = team.slug ? (!team.parentId ? `team/${team.slug}` : `${team.slug}`) : null;
-
-          const eventTypes = await Promise.all(team.eventTypes.map(mapEventType));
-          const teamParentMetadata = team.parent ? teamMetadataSchema.parse(team.parent.metadata) : null;
-          return {
-            teamId: team.id,
-            parentId: team.parentId,
-            bookerUrl: getBookerBaseUrlSync(team.parent?.slug ?? teamParentMetadata?.requestedSlug ?? null),
-            membershipRole:
-              orgMembership && compareMembership(orgMembership, membership.role)
-                ? orgMembership
-                : membership.role,
-            profile: {
-              image: team.parent
-                ? getPlaceholderAvatar(team.parent.logoUrl, team.parent.name)
-                : getPlaceholderAvatar(team.logoUrl, team.name),
-              name: team.name,
-              slug,
-            },
-            metadata: {
-              membershipCount: team.members.length,
-              readOnly: !teamsWithEventTypeReadPermission.includes(team.id),
-            },
-            eventTypes: eventTypes
-              .filter(filterByTeamIds)
-              .filter((evType) => {
-                const res = evType.userId === null || evType.userId === user.id;
-                return res;
-              })
-              .filter((evType) =>
-                !teamsWithEventTypeUpdatePermission.includes(team.id)
-                  ? evType.schedulingType !== SchedulingType.MANAGED
-                  : true
-              )
-              .filter(filterBySchedulingTypes),
-          };
-        })
-    )
+      const eventTypes = team.eventTypes
+        .map((eventType) => mappedEventTypesById.get(eventType.id))
+        .filter(isDefined);
+      const teamParentMetadata = team.parent ? teamMetadataSchema.parse(team.parent.metadata) : null;
+      return {
+        teamId: team.id,
+        parentId: team.parentId,
+        bookerUrl: getBookerBaseUrlSync(team.parent?.slug ?? teamParentMetadata?.requestedSlug ?? null),
+        membershipRole:
+          orgMembership && compareMembership(orgMembership, membership.role)
+            ? orgMembership
+            : membership.role,
+        profile: {
+          image: team.parent
+            ? getPlaceholderAvatar(team.parent.logoUrl, team.parent.name)
+            : getPlaceholderAvatar(team.logoUrl, team.name),
+          name: team.name,
+          slug,
+        },
+        metadata: {
+          membershipCount: team.members.length,
+          readOnly: !teamsWithEventTypeReadPermission.includes(team.id),
+        },
+        eventTypes: eventTypes
+          .filter(filterByTeamIds)
+          .filter((evType) => {
+            const res = evType.userId === null || evType.userId === user.id;
+            return res;
+          })
+          .filter((evType) =>
+            !teamsWithEventTypeUpdatePermission.includes(team.id)
+              ? evType.schedulingType !== SchedulingType.MANAGED
+              : true
+          )
+          .filter(filterBySchedulingTypes),
+      };
+    })
   );
 
   const denormalizedPayload = {

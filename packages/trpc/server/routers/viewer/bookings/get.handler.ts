@@ -20,9 +20,15 @@ import type { TGetInputSchema } from "./get.schema";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type GetOptions = {
@@ -744,48 +750,55 @@ export async function getBookings({
     });
   };
 
-  const bookings = await Promise.all(
-    plainBookings.map(async (booking) => {
-      // If seats are enabled, the event is not set to show attendees, and the current user is not the host, filter out attendees who are not the current user
-      if (
-        booking.seatsReferences.length &&
-        !booking.eventType?.seatsShowAttendees &&
-        !checkIfUserIsHost(user.id, booking)
-      ) {
-        booking.attendees = booking.attendees.filter((attendee) => attendee.email === user.email);
-      }
-
-      let rescheduler = null;
-      if (booking.fromReschedule) {
-        const rescheduledBooking = await prisma.booking.findUnique({
-          where: {
-            uid: booking.fromReschedule,
-          },
-          select: {
-            rescheduledBy: true,
-          },
-        });
-        if (rescheduledBooking) {
-          rescheduler = rescheduledBooking.rescheduledBy;
-        }
-      }
-
-      return {
-        ...booking,
-        rescheduler,
-        eventType: {
-          ...booking.eventType,
-          recurringEvent: parseRecurringEvent(booking.eventType?.recurringEvent),
-          eventTypeColor: parseEventTypeColor(booking.eventType?.eventTypeColor),
-          price: booking.eventType?.price || 0,
-          currency: booking.eventType?.currency || "usd",
-          metadata: EventTypeMetaDataSchema.parse(booking.eventType?.metadata || {}),
-        },
-        startTime: booking.startTime.toISOString(),
-        endTime: booking.endTime.toISOString(),
-      };
-    })
+  const fromRescheduleUids = Array.from(
+    new Set(plainBookings.map((booking) => booking.fromReschedule).filter((uid): uid is string => !!uid))
   );
+  const rescheduledBookings = fromRescheduleUids.length
+    ? await prisma.booking.findMany({
+        where: {
+          uid: {
+            in: fromRescheduleUids,
+          },
+        },
+        select: {
+          uid: true,
+          rescheduledBy: true,
+        },
+      })
+    : [];
+  const reschedulerByUid = new Map(
+    rescheduledBookings.map((booking) => [booking.uid, booking.rescheduledBy])
+  );
+
+  const bookings = plainBookings.map((booking) => {
+    // If seats are enabled, the event is not set to show attendees, and the current user is not the host, filter out attendees who are not the current user
+    if (
+      booking.seatsReferences.length &&
+      !booking.eventType?.seatsShowAttendees &&
+      !checkIfUserIsHost(user.id, booking)
+    ) {
+      booking.attendees = booking.attendees.filter((attendee) => attendee.email === user.email);
+    }
+
+    const rescheduler = booking.fromReschedule
+      ? (reschedulerByUid.get(booking.fromReschedule) ?? null)
+      : null;
+
+    return {
+      ...booking,
+      rescheduler,
+      eventType: {
+        ...booking.eventType,
+        recurringEvent: parseRecurringEvent(booking.eventType?.recurringEvent),
+        eventTypeColor: parseEventTypeColor(booking.eventType?.eventTypeColor),
+        price: booking.eventType?.price || 0,
+        currency: booking.eventType?.currency || "usd",
+        metadata: EventTypeMetaDataSchema.parse(booking.eventType?.metadata || {}),
+      },
+      startTime: booking.startTime.toISOString(),
+      endTime: booking.endTime.toISOString(),
+    };
+  });
 
   // Enrich attendees with user data
   const enrichedBookings = await enrichAttendeesWithUserData(bookings, kysely);
