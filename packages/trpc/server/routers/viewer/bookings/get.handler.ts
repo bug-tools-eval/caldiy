@@ -20,9 +20,15 @@ import type { TGetInputSchema } from "./get.schema";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type GetOptions = {
@@ -36,6 +42,15 @@ type GetOptions = {
 type InputByStatus = "upcoming" | "recurring" | "past" | "cancelled" | "unconfirmed";
 
 const log = logger.getSubLogger({ prefix: ["bookings.get"] });
+
+type RecurringInfo = {
+  recurringEventId: string | null;
+  count: number;
+  firstDate: Date | null;
+  bookings: {
+    [key: string]: Date[];
+  };
+};
 
 export const getHandler = async ({ ctx, input }: GetOptions) => {
   // Support both offset-based (list) and cursor-based pagination (calendar)
@@ -650,70 +665,23 @@ export async function getBookings({
         .execute()
     : [];
 
-  const [
-    recurringInfoBasic,
-    recurringInfoExtended,
-    // We need all promises to be successful, so we are not using Promise.allSettled
-  ] = await Promise.all([
-    prisma.booking.groupBy({
-      by: ["recurringEventId"],
-      _min: {
-        startTime: true,
-      },
-      _count: {
-        recurringEventId: true,
-      },
-      where: {
-        recurringEventId: {
-          not: { equals: null },
-        },
-        userId: user.id,
-      },
-    }),
-    prisma.booking.groupBy({
-      by: ["recurringEventId", "status", "startTime"],
-      _min: {
-        startTime: true,
-      },
-      where: {
-        recurringEventId: {
-          not: { equals: null },
-        },
-        userId: user.id,
-      },
-    }),
-  ]);
+  const shouldFetchRecurringInfo =
+    bookingListingByStatus.length > 1 || plainBookings.some((booking) => booking.recurringEventId);
+  let recurringEventIds: string[] | undefined;
+  if (bookingListingByStatus.length === 1) {
+    recurringEventIds = Array.from(
+      new Set(
+        plainBookings
+          .map((booking) => booking.recurringEventId)
+          .filter((recurringEventId): recurringEventId is string => Boolean(recurringEventId))
+      )
+    );
+  }
 
-  const recurringInfo = recurringInfoBasic.map(
-    (
-      info: (typeof recurringInfoBasic)[number]
-    ): {
-      recurringEventId: string | null;
-      count: number;
-      firstDate: Date | null;
-      bookings: {
-        [key: string]: Date[];
-      };
-    } => {
-      const bookings = recurringInfoExtended.reduce(
-        (prev, curr) => {
-          if (curr.recurringEventId === info.recurringEventId) {
-            prev[curr.status].push(curr.startTime);
-          }
-          return prev;
-        },
-        { ACCEPTED: [], CANCELLED: [], REJECTED: [], PENDING: [], AWAITING_HOST: [] } as {
-          [key in BookingStatus]: Date[];
-        }
-      );
-      return {
-        recurringEventId: info.recurringEventId,
-        count: info._count.recurringEventId,
-        firstDate: info._min.startTime,
-        bookings,
-      };
-    }
-  );
+  let recurringInfo: RecurringInfo[] = [];
+  if (shouldFetchRecurringInfo) {
+    recurringInfo = await getRecurringInfo({ prisma, userId: user.id, recurringEventIds });
+  }
 
   // Now enrich bookings with relation data. We could have queried the relation data along with the bookings, but that would cause unnecessary queries to the database.
   // Because Prisma is also going to query the select relation data sequentially, we are fine querying it separately here as it would be just 1 query instead of 4
@@ -791,6 +759,71 @@ export async function getBookings({
   const enrichedBookings = await enrichAttendeesWithUserData(bookings, kysely);
 
   return { bookings: enrichedBookings, recurringInfo, totalCount };
+}
+
+async function getRecurringInfo({
+  prisma,
+  userId,
+  recurringEventIds,
+}: {
+  prisma: PrismaClient;
+  userId: number;
+  recurringEventIds?: string[];
+}): Promise<RecurringInfo[]> {
+  let recurringEventIdWhere: { in: string[] } | { not: { equals: null } } = { not: { equals: null } };
+  if (recurringEventIds && recurringEventIds.length > 0) {
+    recurringEventIdWhere = { in: recurringEventIds };
+  }
+
+  const [
+    recurringInfoBasic,
+    recurringInfoExtended,
+    // We need all promises to be successful, so we are not using Promise.allSettled
+  ] = await Promise.all([
+    prisma.booking.groupBy({
+      by: ["recurringEventId"],
+      _min: {
+        startTime: true,
+      },
+      _count: {
+        recurringEventId: true,
+      },
+      where: {
+        recurringEventId: recurringEventIdWhere,
+        userId,
+      },
+    }),
+    prisma.booking.groupBy({
+      by: ["recurringEventId", "status", "startTime"],
+      _min: {
+        startTime: true,
+      },
+      where: {
+        recurringEventId: recurringEventIdWhere,
+        userId,
+      },
+    }),
+  ]);
+
+  return recurringInfoBasic.map((info): RecurringInfo => {
+    const bookings = recurringInfoExtended.reduce(
+      (prev, curr) => {
+        if (curr.recurringEventId === info.recurringEventId) {
+          prev[curr.status].push(curr.startTime);
+        }
+        return prev;
+      },
+      { ACCEPTED: [], CANCELLED: [], REJECTED: [], PENDING: [], AWAITING_HOST: [] } as {
+        [key in BookingStatus]: Date[];
+      }
+    );
+    return {
+      recurringEventId: info.recurringEventId,
+      count: info._count.recurringEventId,
+      firstDate: info._min.startTime,
+      bookings,
+    };
+  });
 }
 
 type EnrichedUserData = {
