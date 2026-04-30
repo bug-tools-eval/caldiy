@@ -1,4 +1,3 @@
-import dayjs from "@calcom/dayjs";
 import { daysInMonth, yyyymmdd } from "@calcom/lib/dayjs";
 
 // calculate the available dates in the month:
@@ -20,18 +19,27 @@ export function getAvailableDatesInMonth({
     browsingDate.getMonth(),
     daysInMonth(browsingDate)
   );
+  // `lastDateOfMonth` is constructed at midnight (no time component) and the
+  // loop step constructs `date` at midnight too, so a same-day check reduces
+  // to a Y/M/D equality on the same Date primitive — no need to construct a
+  // dayjs instance per iteration.
+  const lastY = lastDateOfMonth.getFullYear();
+  const lastM = lastDateOfMonth.getMonth();
+  const lastD = lastDateOfMonth.getDate();
+  const isSameDayAsLast = (d: Date) =>
+    d.getFullYear() === lastY && d.getMonth() === lastM && d.getDate() === lastD;
+  // Includes lookup: convert to Set once if provided.
+  const includedDateSet = includedDates ? new Set(includedDates) : null;
   for (
     let date = browsingDate > minDate ? browsingDate : minDate;
-    // Check if date is before the last date of the month
-    // or is the same day, in the same month, in the same year.
-    date < lastDateOfMonth || dayjs(date).isSame(lastDateOfMonth, "day");
+    date < lastDateOfMonth || isSameDayAsLast(date);
     date = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
   ) {
-    // intersect included dates
-    if (includedDates && !includedDates.includes(yyyymmdd(date))) {
+    const formatted = yyyymmdd(date);
+    if (includedDateSet && !includedDateSet.has(formatted)) {
       continue;
     }
-    dates.push(yyyymmdd(date));
+    dates.push(formatted);
   }
   return dates;
 }
