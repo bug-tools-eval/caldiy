@@ -1,9 +1,12 @@
 import { MembershipRole } from "@calcom/prisma/enums";
 
 const getResourcePermissions = async (..._args: unknown[]) => ({
-  canCreate: true, canEdit: true, canDelete: true, canRead: true
+  canCreate: true,
+  canEdit: true,
+  canDelete: true,
+  canRead: true,
 });
-const Resource = { EventType: 'EventType' } as const;
+const Resource = { EventType: "EventType" } as const;
 
 export interface TeamPermissions {
   canCreate: boolean;
@@ -94,10 +97,14 @@ export async function buildTeamPermissionsMap(
   teamMemberships: MembershipWithRole[],
   userId: number
 ): Promise<Map<number, TeamPermissions>> {
+  const teamMembershipByTeamId = new Map<number, MembershipWithRole>();
+  for (const teamM of teamMemberships) {
+    teamMembershipByTeamId.set(teamM.teamId, teamM);
+  }
   const permissionPromises = memberships.map(async (membership) => {
-    const orgMembership = teamMemberships.find(
-      (teamM) => teamM.teamId === membership.team.parentId
-    )?.membershipRole;
+    const orgMembership = membership.team.parentId
+      ? teamMembershipByTeamId.get(membership.team.parentId)?.membershipRole
+      : undefined;
 
     const effectiveRole = getEffectiveRole(orgMembership, membership.role);
     const permissions = await getTeamPermissions(userId, membership.team.id, effectiveRole);
