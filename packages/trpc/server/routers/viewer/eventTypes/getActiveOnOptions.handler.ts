@@ -136,6 +136,7 @@ const fetchEventTypeGroups = async ({
   });
 
   // Add team event types
+  const teamIdsWithEventTypeUpdatePermissionSet = new Set(teamIdsWithEventTypeUpdatePermission);
   const teamGroups = await Promise.all(
     memberships
       .filter((membership) => !membership?.team?.isOrganization)
@@ -145,7 +146,7 @@ const fetchEventTypeGroups = async ({
           metadata: teamMetadataSchema.parse(membership.team.metadata),
         };
 
-        const canUpdateEventTypes = teamIdsWithEventTypeUpdatePermission.includes(team.id);
+        const canUpdateEventTypes = teamIdsWithEventTypeUpdatePermissionSet.has(team.id);
         const eventTypes = team.eventTypes
           ?.filter((evType) => evType.userId === null || evType.userId === user.id)
           ?.filter((evType) =>

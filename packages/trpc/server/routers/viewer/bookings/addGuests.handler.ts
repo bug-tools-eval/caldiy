@@ -163,10 +163,18 @@ function deduplicateGuestEmails(guests: string[]): string[] {
   });
 }
 
-function getBlacklistedEmails(): string[] {
-  return process.env.BLACKLISTED_GUEST_EMAILS
-    ? process.env.BLACKLISTED_GUEST_EMAILS.split(",").map((email) => email.toLowerCase())
-    : [];
+// Cache the blacklist Set keyed by the raw env-var value so that repeated
+// addGuests calls reuse the lower-cased Set instead of re-splitting the env
+// list on every call. Tests that mutate process.env at runtime are honoured
+// via the env-value-change check.
+let cachedBlacklistEnv: string | undefined;
+let cachedBlacklistSet: ReadonlySet<string> = new Set();
+function getBlacklistedEmails(): ReadonlySet<string> {
+  const raw = process.env.BLACKLISTED_GUEST_EMAILS;
+  if (raw === cachedBlacklistEnv) return cachedBlacklistSet;
+  cachedBlacklistEnv = raw;
+  cachedBlacklistSet = new Set(raw ? raw.split(",").map((email) => email.toLowerCase()) : []);
+  return cachedBlacklistSet;
 }
 
 async function getEmailVerificationRequirements(guestEmails: string[]): Promise<Map<string, boolean>> {
@@ -213,13 +221,16 @@ export async function sanitizeAndFilterGuests(
     guests.map((guest) => [extractBaseEmail(guest.email).toLowerCase(), guest])
   );
 
+  // Precompute the lower-cased base email for each existing attendee once, so
+  // we don't re-run extractBaseEmail + toLowerCase per guest per attendee.
+  const existingAttendeeBaseEmails = new Set(
+    booking.attendees.map((attendee) => extractBaseEmail(attendee.email).toLowerCase())
+  );
   const uniqueGuestEmails = deduplicatedGuests.filter((email) => {
     const baseGuestEmail = extractBaseEmail(email).toLowerCase();
     return (
-      !booking.attendees.some(
-        (attendee) => extractBaseEmail(attendee.email).toLowerCase() === baseGuestEmail
-      ) &&
-      !blacklistedGuestEmails.includes(baseGuestEmail) &&
+      !existingAttendeeBaseEmails.has(baseGuestEmail) &&
+      !blacklistedGuestEmails.has(baseGuestEmail) &&
       !emailToRequiresVerification.get(baseGuestEmail)
     );
   });
