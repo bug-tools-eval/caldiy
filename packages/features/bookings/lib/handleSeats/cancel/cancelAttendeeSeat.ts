@@ -8,11 +8,11 @@ import { updateMeeting } from "@calcom/features/conferencing/lib/videoClient";
 import type { WebhookVersion } from "@calcom/features/webhooks/lib/interface/IWebhookRepository";
 import sendPayload from "@calcom/features/webhooks/lib/sendOrSchedulePayload";
 import type { EventPayloadType, EventTypeInfo } from "@calcom/features/webhooks/lib/sendPayload";
+import { getTranslation } from "@calcom/i18n/server";
 import { getRichDescription } from "@calcom/lib/CalEventParser";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { getTranslation } from "@calcom/i18n/server";
 import prisma from "@calcom/prisma";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
 import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
@@ -83,50 +83,56 @@ async function cancelAttendeeSeat(
   if (attendee) {
     /* If there are references then we should update them as well */
 
-    const integrationsToUpdate = [];
+    // Hoist the video-call reference lookup out of the per-reference loop;
+    // it doesn't depend on the iterated reference and is identical for all
+    // iterations.
+    const videoCallReference = bookingToDelete.references.find((reference) =>
+      reference.type.includes("_video")
+    );
 
-    for (const reference of bookingToDelete.references) {
-      if (reference.credentialId || reference.delegationCredentialId) {
-        const credential = await getDelegationCredentialOrFindRegularCredential({
-          id: {
-            credentialId: reference.credentialId,
-            delegationCredentialId: reference.delegationCredentialId,
-          },
-          delegationCredentials,
-        });
+    if (videoCallReference) {
+      evt.videoCallData = {
+        type: videoCallReference.type,
+        id: videoCallReference.meetingId,
+        password: videoCallReference?.meetingPassword,
+        url: videoCallReference.meetingUrl,
+      };
+    }
+    const updatedEvt = {
+      ...evt,
+      attendees: evt.attendees.filter((evtAttendee) => attendee.email !== evtAttendee.email),
+      calendarDescription: getRichDescription(evt),
+    };
 
-        if (credential) {
-          const videoCallReference = bookingToDelete.references.find((reference) =>
-            reference.type.includes("_video")
-          );
+    // Parallelize the per-reference credential + calendar lookups (the
+    // resulting integration calls were already collected and awaited together
+    // via Promise.all below, but the dynamic import inside getCalendar and the
+    // credential lookup were serialized).
+    const referenceIntegrationPromises = bookingToDelete.references.map(async (reference) => {
+      if (!reference.credentialId && !reference.delegationCredentialId) return [] as Promise<unknown>[];
+      const credential = await getDelegationCredentialOrFindRegularCredential({
+        id: {
+          credentialId: reference.credentialId,
+          delegationCredentialId: reference.delegationCredentialId,
+        },
+        delegationCredentials,
+      });
+      if (!credential) return [] as Promise<unknown>[];
 
-          if (videoCallReference) {
-            evt.videoCallData = {
-              type: videoCallReference.type,
-              id: videoCallReference.meetingId,
-              password: videoCallReference?.meetingPassword,
-              url: videoCallReference.meetingUrl,
-            };
-          }
-          const updatedEvt = {
-            ...evt,
-            attendees: evt.attendees.filter((evtAttendee) => attendee.email !== evtAttendee.email),
-            calendarDescription: getRichDescription(evt),
-          };
-          if (reference.type.includes("_video") && reference.type !== "google_meet_video") {
-            integrationsToUpdate.push(updateMeeting(credential, updatedEvt, reference));
-          }
-          if (reference.type.includes("_calendar")) {
-            const calendar = await getCalendar(credential, "booking");
-            if (calendar) {
-              integrationsToUpdate.push(
-                calendar?.updateEvent(reference.uid, updatedEvt, reference.externalCalendarId)
-              );
-            }
-          }
+      const calls: Promise<unknown>[] = [];
+      if (reference.type.includes("_video") && reference.type !== "google_meet_video") {
+        calls.push(updateMeeting(credential, updatedEvt, reference));
+      }
+      if (reference.type.includes("_calendar")) {
+        const calendar = await getCalendar(credential, "booking");
+        if (calendar) {
+          calls.push(calendar.updateEvent(reference.uid, updatedEvt, reference.externalCalendarId));
         }
       }
-    }
+      return calls;
+    });
+
+    const integrationsToUpdate = (await Promise.all(referenceIntegrationPromises)).flat();
 
     try {
       await Promise.all(integrationsToUpdate);

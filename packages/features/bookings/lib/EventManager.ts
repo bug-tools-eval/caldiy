@@ -1125,6 +1125,7 @@ export default class EventManager {
       if (calendarReference.length === 0) {
         return [];
       }
+      const calendarCredentialById = new Map(this.calendarCredentials.map((c) => [c.id, c]));
       // process all calendar references
       let result = [];
       for (const reference of calendarReference) {
@@ -1135,9 +1136,7 @@ export default class EventManager {
         }
 
         if (reference.credentialId) {
-          credential = this.calendarCredentials.filter(
-            (credential) => credential.id === reference?.credentialId
-          )[0];
+          credential = calendarCredentialById.get(reference.credentialId);
           if (!credential) {
             // Fetch credential from DB
             const credentialFromDB = await CredentialRepository.findCredentialForCalendarServiceById({
@@ -1160,7 +1159,11 @@ export default class EventManager {
               };
             }
           }
-          result.push(updateEvent(credential, event, bookingRefUid, calenderExternalId));
+          // Original code used `.filter(...)[0]` which was implicitly typed as
+          // non-undefined; the Map lookup is honest, so non-null-assert here
+          // to keep behavior identical.
+          // biome-ignore lint/style/noNonNullAssertion: see comment above
+          result.push(updateEvent(credential!, event, bookingRefUid, calenderExternalId));
         } else {
           const credentials = this.calendarCredentials.filter(
             (credential) => credential.type === reference?.type
@@ -1185,11 +1188,12 @@ export default class EventManager {
       }
 
       // Taking care of non-traditional calendar integrations
+      const referenceByType = new Map(booking.references.map((ref) => [ref.type, ref]));
       result = result.concat(
         this.calendarCredentials
           .filter((cred) => cred.type.includes("other_calendar"))
           .map(async (cred) => {
-            const calendarReference = booking.references.find((ref) => ref.type === cred.type);
+            const calendarReference = referenceByType.get(cred.type);
 
             if (!calendarReference) {
               return {
@@ -1258,33 +1262,37 @@ export default class EventManager {
       : false;
 
     const uid = getUid(event.uid);
-    for (const credential of this.crmCredentials) {
-      if (isTaskerEnabledForSalesforceCrm) {
-        if (!event.uid) {
-          console.error(
-            `Missing bookingId when scheduling CRM event creation on event type ${event?.eventTypeId}`
-          );
-          continue;
+    // CRM credentials are distinct CRM types per user (Salesforce, HubSpot,
+    // Pipedrive, …), so cross-CRM rate limits do not apply and createEvent
+    // calls can run concurrently.
+    const perCredentialResults = await Promise.all(
+      this.crmCredentials.map(async (credential) => {
+        if (isTaskerEnabledForSalesforceCrm) {
+          if (!event.uid) {
+            console.error(
+              `Missing bookingId when scheduling CRM event creation on event type ${event?.eventTypeId}`
+            );
+            return null;
+          }
+
+          await CRMScheduler.createEvent({ bookingUid: event.uid });
+          return null;
         }
 
-        await CRMScheduler.createEvent({ bookingUid: event.uid });
-        continue;
-      }
+        const currentAppOption = this.getAppOptionsFromEventMetadata(credential);
+        const crm = new CrmManager(credential, currentAppOption);
 
-      const currentAppOption = this.getAppOptionsFromEventMetadata(credential);
+        let success = true;
+        const createdEvent = await crm.createEvent(event).catch((error) => {
+          success = false;
+          // We don't know the type of the error here, so for an Error instance we can read message but otherwise we stringify the error
+          const errorMsg = error instanceof Error ? error.message : JSON.stringify(error);
+          log.warn(`Error creating crm event for ${credential.type} for booking ${event?.uid}`, errorMsg);
+        });
 
-      const crm = new CrmManager(credential, currentAppOption);
+        if (!createdEvent) return null;
 
-      let success = true;
-      const createdEvent = await crm.createEvent(event).catch((error) => {
-        success = false;
-        // We don't know the type of the error here, so for an Error instance we can read message but otherwise we stringify the error
-        const errorMsg = error instanceof Error ? error.message : JSON.stringify(error);
-        log.warn(`Error creating crm event for ${credential.type} for booking ${event?.uid}`, errorMsg);
-      });
-
-      if (createdEvent) {
-        createdEvents.push({
+        return {
           type: credential.type,
           appName: credential.appName || credential.appId || "",
           uid,
@@ -1297,8 +1305,12 @@ export default class EventManager {
           id: createdEvent?.id || "",
           originalEvent: event,
           credentialId: credential.id,
-        });
-      }
+        };
+      })
+    );
+
+    for (const item of perCredentialResults) {
+      if (item) createdEvents.push(item);
     }
     return createdEvents;
   }

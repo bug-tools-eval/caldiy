@@ -1,12 +1,13 @@
 import { getCalendar } from "@calcom/app-store/_utils/getCalendar";
-import { getAllDelegationCredentialsForUserIncludeServiceAccountKey } from "@calcom/app-store/delegationCredential";
-import { getDelegationCredentialOrFindRegularCredential } from "@calcom/app-store/delegationCredential";
+import {
+  getAllDelegationCredentialsForUserIncludeServiceAccountKey,
+  getDelegationCredentialOrFindRegularCredential,
+} from "@calcom/app-store/delegationCredential";
 import { deleteMeeting } from "@calcom/features/conferencing/lib/videoClient";
 import prisma from "@calcom/prisma";
 import type { Attendee } from "@calcom/prisma/client";
 import { BookingStatus } from "@calcom/prisma/enums";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-
 import type { OriginalRescheduledBooking } from "../../handleNewBooking/originalRescheduledBookingUtils";
 
 /* Check if the original booking has no more attendees, if so delete the booking
@@ -25,33 +26,34 @@ const lastAttendeeDeleteBooking = async (
       })
     : [];
   if ((!filteredAttendees || filteredAttendees.length === 0) && originalRescheduledBooking) {
-    const integrationsToDelete = [];
+    // Parallelize per-reference credential + calendar resolution; integration
+    // calls were already collected for Promise.all but the lookups themselves
+    // were serialized in the for-of loop.
+    const referenceIntegrationPromises = originalRescheduledBooking.references.map(async (reference) => {
+      if (!reference.credentialId && !reference.delegationCredentialId) return [] as Promise<unknown>[];
+      const credential = await getDelegationCredentialOrFindRegularCredential({
+        id: {
+          credentialId: reference.credentialId,
+          delegationCredentialId: reference.delegationCredentialId,
+        },
+        delegationCredentials,
+      });
+      if (!credential) return [] as Promise<unknown>[];
 
-    for (const reference of originalRescheduledBooking.references) {
-      if (reference.credentialId || reference.delegationCredentialId) {
-        const credential = await getDelegationCredentialOrFindRegularCredential({
-          id: {
-            credentialId: reference.credentialId,
-            delegationCredentialId: reference.delegationCredentialId,
-          },
-          delegationCredentials,
-        });
-
-        if (credential) {
-          if (reference.type.includes("_video")) {
-            integrationsToDelete.push(deleteMeeting(credential, reference.uid));
-          }
-          if (reference.type.includes("_calendar") && originalBookingEvt) {
-            const calendar = await getCalendar(credential, "booking");
-            if (calendar) {
-              integrationsToDelete.push(
-                calendar?.deleteEvent(reference.uid, originalBookingEvt, reference.externalCalendarId)
-              );
-            }
-          }
+      const calls: Promise<unknown>[] = [];
+      if (reference.type.includes("_video")) {
+        calls.push(deleteMeeting(credential, reference.uid));
+      }
+      if (reference.type.includes("_calendar") && originalBookingEvt) {
+        const calendar = await getCalendar(credential, "booking");
+        if (calendar) {
+          calls.push(calendar.deleteEvent(reference.uid, originalBookingEvt, reference.externalCalendarId));
         }
       }
-    }
+      return calls;
+    });
+
+    const integrationsToDelete = (await Promise.all(referenceIntegrationPromises)).flat();
 
     await Promise.all(integrationsToDelete).then(async () => {
       await prisma.booking.update({
