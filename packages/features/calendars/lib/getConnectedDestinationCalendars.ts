@@ -6,9 +6,9 @@ import {
   getConnectedCalendars,
 } from "@calcom/features/calendars/lib/CalendarManager";
 import { DestinationCalendarRepository } from "@calcom/features/calendars/repositories/DestinationCalendarRepository";
+import { SelectedCalendarRepository } from "@calcom/features/selectedCalendar/repositories/SelectedCalendarRepository";
 import { isDelegationCredential } from "@calcom/lib/delegationCredential";
 import logger from "@calcom/lib/logger";
-import { SelectedCalendarRepository } from "@calcom/features/selectedCalendar/repositories/SelectedCalendarRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import prisma from "@calcom/prisma";
 import type { DestinationCalendar, SelectedCalendar, User } from "@calcom/prisma/client";
@@ -38,18 +38,23 @@ const _ensureNoConflictingNonDelegatedConnectedCalendar = <
   connectedCalendars: T[];
   loggedInUser: { email: string };
 }) => {
-  return connectedCalendars.filter((connectedCalendar, _index, array) => {
-    const allCalendarsWithSameAppSlug = array.filter(
-      (cal) => cal.integration.slug === connectedCalendar.integration.slug
-    );
+  // Group calendars by slug ONCE up-front; the inner predicate previously scanned
+  // the whole `connectedCalendars` array twice per item (O(n²)).
+  const slugToCount = new Map<string, number>();
+  const slugHasDelegated = new Map<string, boolean>();
+  for (const cal of connectedCalendars) {
+    const slug = cal.integration.slug;
+    slugToCount.set(slug, (slugToCount.get(slug) ?? 0) + 1);
+    if (cal.delegationCredentialId) slugHasDelegated.set(slug, true);
+  }
+
+  return connectedCalendars.filter((connectedCalendar) => {
+    const slug = connectedCalendar.integration.slug;
 
     // If no other calendar with this slug, keep it
-    if (allCalendarsWithSameAppSlug.length === 1) return true;
+    if ((slugToCount.get(slug) ?? 0) === 1) return true;
 
-    const delegatedCalendarsWithSameAppSlug = allCalendarsWithSameAppSlug.filter(
-      (cal) => cal.delegationCredentialId
-    );
-    if (!delegatedCalendarsWithSameAppSlug.length) {
+    if (!slugHasDelegated.get(slug)) {
       return true;
     }
 

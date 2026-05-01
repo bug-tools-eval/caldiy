@@ -12,7 +12,10 @@ import { Prisma } from "@calcom/prisma/client";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import type { NewBookingEventType } from "./getEventTypesFromDB";
 
-const getOrgDomainConfig = (..._args: unknown[]) => ({ currentOrgDomain: null as string | null, isValidOrgDomain: false });
+const getOrgDomainConfig = (..._args: unknown[]) => ({
+  currentOrgDomain: null as string | null,
+  isValidOrgDomain: false,
+});
 
 const log = logger.getSubLogger({ prefix: ["[loadUsers]:handleNewBooking "] });
 
@@ -106,9 +109,13 @@ const loadDynamicUsers = async (dynamicUserList: string[], currentOrgDomain: str
 
   // For dynamic group bookings: reorder users to match dynamicUserList order
   // to ensure the first user in the URL is the organizer/host
+  const usernameOrder = new Map<string, number>();
+  for (let i = 0; i < dynamicUserList.length; i++) {
+    usernameOrder.set(dynamicUserList[i], i);
+  }
   return users.sort((a, b) => {
-    const aIndex = dynamicUserList.indexOf(a.username!);
-    const bIndex = dynamicUserList.indexOf(b.username!);
+    const aIndex = usernameOrder.get(a.username!) ?? -1;
+    const bIndex = usernameOrder.get(b.username!) ?? -1;
     return aIndex - bIndex;
   });
 };
@@ -129,6 +136,12 @@ export const findUsersByUsername = async ({
     orgSlug,
     usernameList,
   });
+  const profileByUserId = new Map<number, NonNullable<typeof profiles>[number]>();
+  if (profiles) {
+    for (const profile of profiles) {
+      profileByUserId.set(profile.user.id, profile);
+    }
+  }
   return (
     await prisma.user.findMany({
       where,
@@ -142,7 +155,7 @@ export const findUsersByUsername = async ({
     })
   ).map((_user) => {
     const user = withSelectedCalendars(_user);
-    const profile = profiles?.find((profile) => profile.user.id === user.id) ?? null;
+    const profile = profileByUserId.get(user.id) ?? null;
     return {
       ...user,
       organizationId: profile?.organizationId ?? null,

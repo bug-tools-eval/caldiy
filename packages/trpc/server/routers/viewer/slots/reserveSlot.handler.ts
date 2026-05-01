@@ -1,16 +1,12 @@
+import dayjs from "@calcom/dayjs";
+import { PrismaSelectedSlotRepository } from "@calcom/features/selectedSlots/repositories/PrismaSelectedSlotRepository";
+import { MINUTES_TO_BOOK, WEBAPP_URL } from "@calcom/lib/constants";
+import type { PrismaClient } from "@calcom/prisma";
+import { BookingStatus } from "@calcom/prisma/enums";
+import { TRPCError } from "@trpc/server";
 import { serialize } from "cookie";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { v4 as uuid } from "uuid";
-
-import dayjs from "@calcom/dayjs";
-import { PrismaSelectedSlotRepository } from "@calcom/features/selectedSlots/repositories/PrismaSelectedSlotRepository";
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { MINUTES_TO_BOOK } from "@calcom/lib/constants";
-import type { PrismaClient } from "@calcom/prisma";
-import { BookingStatus } from "@calcom/prisma/enums";
-
-import { TRPCError } from "@trpc/server";
-
 import type { TReserveSlotInputSchema } from "./reserveSlot.schema";
 
 interface ReserveSlotOptions {
@@ -39,20 +35,38 @@ export const reserveSlotHandler = async ({ ctx, input }: ReserveSlotOptions) => 
     });
   }
 
+  // Check for existing reservations for the same slot
+  const slotsRepo = new PrismaSelectedSlotRepository(prisma);
+
+  // For seated events, the seat-availability lookup and the slot-reservation
+  // lookup are independent given the already-fetched `eventType` — run them
+  // concurrently. For non-seated events, only the reservation lookup runs.
+  const [bookingWithAttendees, reservedBySomeoneElse] = await Promise.all([
+    eventType.seatsPerTimeSlot
+      ? prisma.booking.findFirst({
+          where: {
+            eventTypeId,
+            startTime: slotUtcStartDate,
+            endTime: slotUtcEndDate,
+            status: BookingStatus.ACCEPTED,
+          },
+          select: { attendees: true },
+        })
+      : Promise.resolve(null),
+    slotsRepo.findReservedByOthers({
+      slot: {
+        utcStartIso: slotUtcStartDate,
+        utcEndIso: slotUtcEndDate,
+      },
+      eventTypeId,
+      uid,
+    }),
+  ]);
+
   let shouldReserveSlot = true;
 
   // If this is a seated event then don't reserve a slot
   if (eventType.seatsPerTimeSlot) {
-    // Check to see if this is the last attendee
-    const bookingWithAttendees = await prisma.booking.findFirst({
-      where: {
-        eventTypeId,
-        startTime: slotUtcStartDate,
-        endTime: slotUtcEndDate,
-        status: BookingStatus.ACCEPTED,
-      },
-      select: { attendees: true },
-    });
     const bookingAttendeesLength = bookingWithAttendees?.attendees?.length;
     if (bookingAttendeesLength) {
       const seatsLeft = eventType.seatsPerTimeSlot - bookingAttendeesLength;
@@ -62,17 +76,6 @@ export const reserveSlotHandler = async ({ ctx, input }: ReserveSlotOptions) => 
       shouldReserveSlot = false;
     }
   }
-
-  // Check for existing reservations for the same slot
-  const slotsRepo = new PrismaSelectedSlotRepository(prisma);
-  const reservedBySomeoneElse = await slotsRepo.findReservedByOthers({
-    slot: {
-      utcStartIso: slotUtcStartDate,
-      utcEndIso: slotUtcEndDate,
-    },
-    eventTypeId,
-    uid,
-  });
 
   if (eventType && shouldReserveSlot && !reservedBySomeoneElse && !_isDryRun) {
     try {

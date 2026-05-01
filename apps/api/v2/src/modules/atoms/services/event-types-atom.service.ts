@@ -25,8 +25,6 @@ import {
 } from "@calcom/platform-libraries/event-types";
 import type { PrismaClient } from "@calcom/prisma";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
-import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 import { AtomsRepository } from "@/modules/atoms/atoms.repository";
 import { CredentialsRepository } from "@/modules/credentials/credentials.repository";
 import { MembershipsRepository } from "@/modules/memberships/memberships.repository";
@@ -34,6 +32,8 @@ import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { UsersService } from "@/modules/users/services/users.service";
 import { UsersRepository, UserWithProfile } from "@/modules/users/users.repository";
+import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
+import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 
 type EnabledAppType = App & {
   credential: CredentialDataWithTeamName;
@@ -200,13 +200,18 @@ export class EventTypesAtomService {
       const parentTeams: TeamQuery[] = [];
       // Only loop and grab parent teams if a teamId was given. If not then all teams will be queried
       if (teamId) {
+        // Pre-build a Set of existing team ids; the inner `teamsQuery.some(...)`
+        // was O(n²) over the whole array per team.
+        const existingTeamIds = new Set(teamsQuery.map((t) => t.id));
+        const seenParentIds = new Set<number>();
         teamsQuery.forEach((team) => {
           if (team?.parent) {
             const { parent, ...filteredTeam } = team;
             filteredTeams.push(filteredTeam);
-            // Only add parent team if it's not already in teamsQuery
-            if (!teamsQuery.some((t) => t.id === parent.id)) {
+            // Only add parent team if it's not already in teamsQuery (and only once).
+            if (!existingTeamIds.has(parent.id) && !seenParentIds.has(parent.id)) {
               parentTeams.push(parent);
+              seenParentIds.add(parent.id);
             }
           }
         });

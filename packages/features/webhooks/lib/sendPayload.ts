@@ -1,11 +1,10 @@
 import { createHmac } from "node:crypto";
-import { compile } from "handlebars";
-
 import type { TGetTranscriptAccessLink } from "@calcom/app-store/dailyvideo/zod";
 import { getHumanReadableLocationValue } from "@calcom/app-store/locations";
-import type { WebhookSubscriber, PaymentData } from "@calcom/features/webhooks/lib/dto/types";
+import type { PaymentData, WebhookSubscriber } from "@calcom/features/webhooks/lib/dto/types";
 import { getUTCOffsetByTimezone } from "@calcom/lib/dayjs";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
+import { compile } from "handlebars";
 
 // Minimal webhook shape for sending payloads (subset of WebhookSubscriber)
 type WebhookForPayload = Pick<WebhookSubscriber, "subscriberUrl" | "appId" | "payloadTemplate" | "version">;
@@ -103,10 +102,7 @@ export type EventPayloadType = Omit<CalendarEvent, "assignmentReason"> &
       | null;
   };
 
-export type WebhookPayloadType =
-  | EventPayloadType
-  | OOOEntryPayloadType
-  | BookingNoShowUpdatedPayload;
+export type WebhookPayloadType = EventPayloadType | OOOEntryPayloadType | BookingNoShowUpdatedPayload;
 
 type WebhookDataType = WebhookPayloadType & { triggerEvent: string; createdAt: string };
 
@@ -180,12 +176,31 @@ function getZapierPayload(data: WithUTCOffsetType<EventPayloadType & { createdAt
   return JSON.stringify(body);
 }
 
+// Handlebars `compile` is expensive (parses the template into an AST) and templates
+// are static configuration stored on the Webhook row — same template string is fed
+// in for every webhook delivery for that subscription. Cache compiled templates.
+const compiledTemplateCache = new Map<string, ReturnType<typeof compile>>();
+const COMPILED_TEMPLATE_CACHE_MAX = 1000;
+
+function getCompiledTemplate(template: string) {
+  let compiledFn = compiledTemplateCache.get(template);
+  if (compiledFn) return compiledFn;
+  compiledFn = compile(template);
+  // Bound the cache so a runaway set of unique templates can't grow unbounded.
+  if (compiledTemplateCache.size >= COMPILED_TEMPLATE_CACHE_MAX) {
+    const firstKey = compiledTemplateCache.keys().next().value;
+    if (firstKey !== undefined) compiledTemplateCache.delete(firstKey);
+  }
+  compiledTemplateCache.set(template, compiledFn);
+  return compiledFn;
+}
+
 function applyTemplate(
   template: string,
   data: WebhookDataType | Record<string, unknown>,
   contentType: ContentType
 ) {
-  const compiled = compile(template)(data).replace(/&quot;/g, '"');
+  const compiled = getCompiledTemplate(template)(data).replace(/&quot;/g, '"');
 
   if (contentType === "application/json") {
     return JSON.stringify(jsonParse(compiled));
@@ -238,10 +253,7 @@ const sendPayload = async (
   }
 
   if (body === undefined) {
-    if (
-      template &&
-      (isOOOEntryPayload(data) || isEventPayload(data) || isNoShowPayload(data))
-    ) {
+    if (template && (isOOOEntryPayload(data) || isEventPayload(data) || isNoShowPayload(data))) {
       body = applyTemplate(template, { ...data, triggerEvent, createdAt }, contentType);
     } else {
       body = JSON.stringify({

@@ -4,7 +4,7 @@ import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-util
 import type { Fields } from "@calcom/features/bookings/lib/getBookingFields";
 import { fieldTypesConfigMap } from "@calcom/features/form-builder/fieldTypes";
 import { convertToSmallestCurrencyUnit } from "@calcom/lib/currencyConversions";
-import type { AppCategories, Prisma, EventType, PaymentOption } from "@calcom/prisma/client";
+import type { AppCategories, EventType, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 import type { IAbstractPaymentService } from "@calcom/types/PaymentService";
 
@@ -81,6 +81,13 @@ const handlePayment = async ({
   if ((bookingFields || [])?.length > 0) {
     let addonsPrice = 0;
 
+    // Intl.NumberFormat construction is expensive; build once and reuse across all
+    // radio option label matches in the loop below.
+    const currencyFormatter = new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currency,
+    });
+
     // Process each booking field
     (bookingFields || []).forEach((field) => {
       // Skip fields that don't support pricing
@@ -124,10 +131,7 @@ const handlePayment = async ({
           if (field.type === "radio") {
             // For radio, the value coming is the label itself (formatted with price)
             selectedOption = typedInput.options?.find((opt) => {
-              const formattedValue = `${opt.value} (${Intl.NumberFormat(locale, {
-                style: "currency",
-                currency: currency,
-              }).format(opt.price || 0)})`;
+              const formattedValue = `${opt.value} (${currencyFormatter.format(opt.price || 0)})`;
               return formattedValue === selectedValue;
             });
           } else {

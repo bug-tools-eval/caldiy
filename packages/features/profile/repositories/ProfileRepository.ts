@@ -605,7 +605,7 @@ export class ProfileRepository implements IProfileRepository {
     if (profileId && organizationId) {
       const hasAccess = await ProfileRepository.checkUserAccessToProfile({
         userId,
-        profileId,
+        profileUserId: rawProfile.userId,
         organizationId,
       });
 
@@ -693,24 +693,23 @@ export class ProfileRepository implements IProfileRepository {
 
   private static async checkUserAccessToProfile({
     userId,
-    profileId,
+    profileUserId,
     organizationId,
   }: {
     userId: number;
-    profileId: number | null;
+    // The owning userId of the profile being accessed. The single caller
+    // (`findByUpIdWithAuth`) has already loaded the profile, so passing the
+    // userId directly avoids a redundant `prisma.profile.findUnique` here.
+    profileUserId: number | null;
     organizationId: number | null;
   }): Promise<boolean> {
-    if (!profileId || !organizationId) {
+    if (!profileUserId || !organizationId) {
       return false;
     }
 
-    // Check if user owns the profile
-    const profile = await prisma.profile.findUnique({
-      where: { id: profileId },
-      select: { userId: true },
-    });
-
-    if (profile?.userId === userId) {
+    // Check if user owns the profile (using the already-loaded profile.userId
+    // — no second DB roundtrip needed).
+    if (profileUserId === userId) {
       return true;
     }
 

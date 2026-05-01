@@ -1,7 +1,6 @@
 import dayjs from "@calcom/dayjs";
 import logger from "@calcom/lib/logger";
 import type { PrismaClient } from "@calcom/prisma";
-
 import { DEFAULT_WEBHOOK_VERSION } from "./interface/IWebhookRepository";
 import { createWebhookSignature, jsonParse } from "./sendPayload";
 
@@ -35,6 +34,7 @@ export async function handleWebhookScheduledTriggers(prisma: PrismaClient) {
   });
 
   const fetchPromises: Promise<Response | void>[] = [];
+  const finishedJobIds: number[] = [];
 
   // run jobs
   for (const job of jobsToRun) {
@@ -75,13 +75,20 @@ export async function handleWebhookScheduledTriggers(prisma: PrismaClient) {
       })
     );
 
-    // clean finished job
-    await prisma.webhookScheduledTriggers.delete({
-      where: {
-        id: job.id,
-      },
+    finishedJobIds.push(job.id);
+  }
+
+  // Batch the per-job DB delete into a single deleteMany. Previously this awaited
+  // one prisma.delete per iteration — N round-trips for N jobs.
+  if (finishedJobIds.length > 0) {
+    await prisma.webhookScheduledTriggers.deleteMany({
+      where: { id: { in: finishedJobIds } },
     });
   }
 
-  Promise.allSettled(fetchPromises);
+  // Previously the result of `Promise.allSettled` was discarded without awaiting,
+  // letting the cron handler return before in-flight webhook fetches resolved
+  // (and discarding any of their errors). Await so the handler reports honest
+  // completion.
+  await Promise.allSettled(fetchPromises);
 }

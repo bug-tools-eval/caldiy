@@ -83,8 +83,9 @@ export default class LimitManager {
     source: string;
   }) {
     const tzStart = params.timeZone ? params.start.tz(params.timeZone) : params.start;
-    this.busyMap.set(`${params.unit}-${tzStart.toISOString()}`, {
-      start: tzStart.toISOString(),
+    const startIso = tzStart.toISOString();
+    this.busyMap.set(`${params.unit}-${startIso}`, {
+      start: startIso,
       end: tzStart.endOf(params.unit).toISOString(),
       title: params.title,
       source: params.source,

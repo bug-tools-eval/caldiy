@@ -203,15 +203,19 @@ export class HostRepository {
     search?: string;
     memberUserIds?: number[];
   }) {
-    const userIdFilter = memberUserIds !== undefined
-      ? cursor
-        ? { in: memberUserIds, gt: cursor }
-        : { in: memberUserIds }
-      : cursor
-        ? { gt: cursor }
-        : undefined;
+    const userIdFilter =
+      memberUserIds !== undefined
+        ? cursor
+          ? { in: memberUserIds, gt: cursor }
+          : { in: memberUserIds }
+        : cursor
+          ? { gt: cursor }
+          : undefined;
 
-    const hosts = await this.prismaClient.host.findMany({
+    // Run the page fetch and the first-page-only fixed-hosts existence check in
+    // parallel — they touch different rows on the same table and have no data
+    // dependency between them.
+    const hostsPromise = this.prismaClient.host.findMany({
       where: {
         eventTypeId,
         ...(userIdFilter && { userId: userIdFilter }),
@@ -241,17 +245,20 @@ export class HostRepository {
       orderBy: [{ userId: "asc" }],
     });
 
+    // Only check on the first page to avoid an extra query on every scroll
+    const fixedHostsCountPromise = !cursor
+      ? this.prismaClient.host.count({
+          where: { eventTypeId, isFixed: true },
+          take: 1,
+        })
+      : Promise.resolve(undefined);
+
+    const [hosts, fixedHostsCount] = await Promise.all([hostsPromise, fixedHostsCountPromise]);
+
     const hasMore = hosts.length > limit;
     const items = hasMore ? hosts.slice(0, limit) : hosts;
     const nextCursor = hasMore ? items[items.length - 1].userId : undefined;
-
-    // Only check on the first page to avoid an extra query on every scroll
-    const hasFixedHosts = !cursor
-      ? (await this.prismaClient.host.count({
-          where: { eventTypeId, isFixed: true },
-          take: 1,
-        })) > 0
-      : undefined;
+    const hasFixedHosts = fixedHostsCount === undefined ? undefined : fixedHostsCount > 0;
 
     return { items, nextCursor, hasMore, hasFixedHosts };
   }

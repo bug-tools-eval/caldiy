@@ -5,9 +5,7 @@ import { buildDateRanges } from "@calcom/features/schedules/lib/date-ranges";
 import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { prisma } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
-
 import { TRPCError } from "@trpc/server";
-
 import type { TrpcSessionUser } from "../../../../types";
 import type { TListTeamAvailaiblityScheme } from "./listTeamAvailability.schema";
 
@@ -92,7 +90,17 @@ async function getTeamMembers({
 
 type Member = Awaited<ReturnType<typeof getTeamMembers>>[number];
 
-async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
+type PrefetchedSchedule = {
+  availability: { days: number[]; startTime: Date; endTime: Date; date: Date | null }[];
+  timeZone: string | null;
+};
+
+function buildMember(
+  member: Member,
+  dateFrom: Dayjs,
+  dateTo: Dayjs,
+  scheduleById: Map<number, PrefetchedSchedule>
+) {
   if (!member.user.defaultScheduleId) {
     return {
       id: member.user.id,
@@ -107,10 +115,7 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
     };
   }
 
-  const schedule = await prisma.schedule.findUnique({
-    where: { id: member.user.defaultScheduleId },
-    select: { availability: true, timeZone: true },
-  });
+  const schedule = scheduleById.get(member.user.defaultScheduleId);
   const timeZone = schedule?.timeZone || member.user.timeZone;
 
   const { dateRanges } = buildDateRanges({
@@ -239,7 +244,7 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
     }
   }
 
-  let nextCursor: typeof cursor | undefined = undefined;
+  let nextCursor: typeof cursor | undefined;
   if (teamMembers && teamMembers.length > limit) {
     const nextItem = teamMembers.pop();
     nextCursor = nextItem?.id;
@@ -248,9 +253,26 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
   const dateFrom = dayjs(input.startDate).tz(input.loggedInUsersTz).subtract(1, "day");
   const dateTo = dayjs(input.endDate).tz(input.loggedInUsersTz).add(1, "day");
 
-  const buildMembers = teamMembers?.map((member) => buildMember(member, dateFrom, dateTo));
+  // Batch-fetch all members' default schedules in a single query instead of one
+  // findUnique per member inside Promise.all (which previously fanned out N
+  // round-trips for an N-member team).
+  const scheduleIds = Array.from(
+    new Set(
+      (teamMembers ?? [])
+        .map((m) => m.user.defaultScheduleId)
+        .filter((id): id is number => typeof id === "number")
+    )
+  );
+  const schedules =
+    scheduleIds.length > 0
+      ? await prisma.schedule.findMany({
+          where: { id: { in: scheduleIds } },
+          select: { id: true, availability: true, timeZone: true },
+        })
+      : [];
+  const scheduleById = new Map(schedules.map((s) => [s.id, s]));
 
-  const members = await Promise.all(buildMembers);
+  const members = (teamMembers ?? []).map((member) => buildMember(member, dateFrom, dateTo, scheduleById));
 
   let belongsToTeam = true;
 
