@@ -6,9 +6,9 @@ import {
   getConnectedCalendars,
 } from "@calcom/features/calendars/lib/CalendarManager";
 import { DestinationCalendarRepository } from "@calcom/features/calendars/repositories/DestinationCalendarRepository";
+import { SelectedCalendarRepository } from "@calcom/features/selectedCalendar/repositories/SelectedCalendarRepository";
 import { isDelegationCredential } from "@calcom/lib/delegationCredential";
 import logger from "@calcom/lib/logger";
-import { SelectedCalendarRepository } from "@calcom/features/selectedCalendar/repositories/SelectedCalendarRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import prisma from "@calcom/prisma";
 import type { DestinationCalendar, SelectedCalendar, User } from "@calcom/prisma/client";
@@ -397,14 +397,13 @@ export async function getConnectedDestinationCalendarsAndEnsureDefaultsInDb({
         item.credential as CredentialDataWithTeamName & { selectedCalendars: { id: string }[] };
 
       const safeToSendIntegration = cleanIntegrationKeys(integration);
+      const credentialSelectedCalendarIds = new Set(credential.selectedCalendars.map((c) => c.id));
       connectedCalendars.push({
         integration: safeToSendIntegration,
         credentialId: credential.id,
         delegationCredentialId: credential.delegationCredentialId,
         calendars: selectedCalendars
-          .filter((cal) =>
-            credential.selectedCalendars.some((appSelectedCal) => appSelectedCal.id === cal.id)
-          )
+          .filter((cal) => credentialSelectedCalendarIds.has(cal.id))
           .map((cal) => ({
             ...cal,
             isSelected: true,

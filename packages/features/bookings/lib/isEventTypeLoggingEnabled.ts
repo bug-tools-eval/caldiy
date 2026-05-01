@@ -1,3 +1,4 @@
+import process from "node:process";
 export function isEventTypeLoggingEnabled({
   eventTypeId,
   usernameOrTeamName,
@@ -27,7 +28,8 @@ export function isEventTypeLoggingEnabled({
     .map((u) => u.trim())
     .filter((u) => u.length > 0);
 
-  return validUsernames.some((username) => {
-    return usernameOrTeamnamesList.some((foundUsername) => foundUsername === username);
-  });
+  // O(n+m) — Set the supplied username(s) once and check membership against
+  // the env-configured list, instead of nested .some which is O(n*m).
+  const usernameOrTeamnameSet = new Set(usernameOrTeamnamesList);
+  return validUsernames.some((username) => usernameOrTeamnameSet.has(username));
 }

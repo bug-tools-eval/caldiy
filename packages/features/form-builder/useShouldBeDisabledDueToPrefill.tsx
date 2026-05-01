@@ -1,8 +1,6 @@
+import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
 import { useFormContext } from "react-hook-form";
 import type { z } from "zod";
-
-import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
-
 import type { fieldsSchema } from "./schema";
 
 type RhfForm = {
@@ -28,7 +26,10 @@ function toArray(value: string[] | string): string[] {
 }
 
 function intersected(arr1: string[], arr2: string[]): boolean {
-  return !!arr1.find((value) => arr2.find((innerValue) => innerValue?.toString() == value?.toString()));
+  // O(n+m) — build a Set of stringified values from arr2 once instead of
+  // running .find per outer iteration.
+  const arr2StringSet = new Set(arr2.map((v) => v?.toString()));
+  return arr1.some((value) => arr2StringSet.has(value?.toString()));
 }
 
 function isEqual(searchParamValue: string | string[], formValue: string[] | string): boolean {

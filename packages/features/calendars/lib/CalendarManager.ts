@@ -154,13 +154,14 @@ export const getConnectedCalendars = async (
           };
         }
         const cals = await calendarInstance.listCalendars();
+        const selectedExternalIds = new Set(selectedCalendars.map((s) => s.externalId));
         const calendars: ConnectedCalendar[] = sortBy(
           cals.map((cal: IntegrationCalendar) => {
             return {
               ...cal,
               readOnly: cal.readOnly || false,
               primary: cal.primary || null,
-              isSelected: selectedCalendars.some((selected) => selected.externalId === cal.externalId),
+              isSelected: selectedExternalIds.has(cal.externalId),
               credentialId,
               delegationCredentialId,
             };
