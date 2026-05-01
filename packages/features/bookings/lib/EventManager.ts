@@ -1316,34 +1316,37 @@ export default class EventManager {
   }
 
   private async updateAllCRMEvents(event: CalendarEvent, booking: PartialBooking) {
-    const updatedEvents = [];
     const credentialById = new Map<number, (typeof this.crmCredentials)[number]>(
       this.crmCredentials.map((cred) => [cred.id, cred])
     );
 
-    // Loop through all booking references and update the corresponding CRM event
-    for (const reference of booking.references) {
-      const credential =
-        reference.credentialId != null ? credentialById.get(reference.credentialId) : undefined;
-      let success = true;
-      if (credential) {
+    // Each CRM credential is a different external CRM system for this user
+    // (Salesforce / HubSpot / …), so the update calls don't share rate limits
+    // and can run in parallel — same reasoning as createAllCRMEvents.
+    const updatedEventsRaw = await Promise.all(
+      booking.references.map(async (reference) => {
+        const credential =
+          reference.credentialId != null ? credentialById.get(reference.credentialId) : undefined;
+        if (!credential) return null;
+
+        let success = true;
         const crm = new CrmManager(credential);
         const updatedEvent = await crm.updateEvent(reference.uid, event).catch((error) => {
           success = false;
           log.warn(`Error updating crm event for ${credential.type} for booking ${event?.uid}`, error);
         });
 
-        updatedEvents.push({
+        return {
           type: credential.type,
           appName: credential.appName || credential.appId || "",
           success,
           uid: updatedEvent?.id || "",
           originalEvent: event,
-        });
-      }
-    }
+        };
+      })
+    );
 
-    return updatedEvents;
+    return updatedEventsRaw.filter((e): e is NonNullable<typeof e> => e !== null);
   }
 
   private async deleteCRMEvent({ reference, event }: { reference: PartialReference; event: CalendarEvent }) {
