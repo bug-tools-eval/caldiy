@@ -145,16 +145,14 @@ export class PrismaTeamFeatureRepository implements ITeamFeatureRepository {
       return {};
     }
 
-    const results = await Promise.all(
-      teamIds.map(async (teamId) => {
-        const autoOptIn = await this.findAutoOptInByTeamId(teamId);
-        return { teamId, autoOptIn };
-      })
-    );
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: teamIds } },
+      select: { id: true, autoOptInFeatures: true },
+    });
 
-    const result: Record<number, boolean> = {};
-    for (const { teamId, autoOptIn } of results) {
-      result[teamId] = autoOptIn;
+    const result: Record<number, boolean> = Object.fromEntries(teamIds.map((teamId) => [teamId, false]));
+    for (const team of teams) {
+      result[team.id] = team.autoOptInFeatures;
     }
     return result;
   }

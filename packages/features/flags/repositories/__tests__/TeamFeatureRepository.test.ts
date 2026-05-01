@@ -267,15 +267,20 @@ describe("CachedTeamFeatureRepository", () => {
     });
 
     it("should return auto opt-in values for multiple teams", async () => {
-      vi.mocked(mockPrisma.team.findUnique)
-        .mockResolvedValueOnce({ id: 1, autoOptInFeatures: true })
-        .mockResolvedValueOnce({ id: 2, autoOptInFeatures: false });
+      vi.mocked(mockPrisma.team.findMany).mockResolvedValue([
+        { id: 1, autoOptInFeatures: true },
+        { id: 2, autoOptInFeatures: false },
+      ]);
 
       const result = await repository.findAutoOptInByTeamIds([1, 2]);
 
       expect(result).toEqual({
         1: true,
         2: false,
+      });
+      expect(mockPrisma.team.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [1, 2] } },
+        select: { id: true, autoOptInFeatures: true },
       });
     });
   });
