@@ -1,20 +1,18 @@
-import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
-import { parseRequestData } from "app/api/parseRequestData";
-import { cookies, headers } from "next/headers";
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-
+import process from "node:process";
 import { ErrorCode } from "@calcom/features/auth/lib/ErrorCode";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
 import { symmetricDecrypt } from "@calcom/lib/crypto";
 import { totpAuthenticatorCheck } from "@calcom/lib/totp";
 import prisma from "@calcom/prisma";
-
 import { buildLegacyRequest } from "@lib/buildLegacyCtx";
+import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
+import { parseRequestData } from "app/api/parseRequestData";
+import { cookies, headers } from "next/headers";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 async function postHandler(req: NextRequest) {
-  const body = await parseRequestData(req);
   const session = await getServerSession({ req: buildLegacyRequest(await headers(), await cookies()) });
 
   if (!session) {
@@ -31,7 +29,13 @@ async function postHandler(req: NextRequest) {
     identifier: `api:totp-enable:${session.user.id}`,
   });
 
-  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      twoFactorEnabled: true,
+      twoFactorSecret: true,
+    },
+  });
   if (!user) {
     console.error(`Session references user that no longer exists.`);
     return NextResponse.json({ message: "Not authenticated" }, { status: 401 });
@@ -57,6 +61,8 @@ async function postHandler(req: NextRequest) {
     );
     return NextResponse.json({ error: ErrorCode.InternalServerError }, { status: 500 });
   }
+
+  const body = await parseRequestData(req);
 
   const isValidToken = totpAuthenticatorCheck(body.code, secret);
   if (!isValidToken) {

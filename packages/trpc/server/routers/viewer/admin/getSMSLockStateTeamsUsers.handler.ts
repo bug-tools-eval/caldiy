@@ -1,6 +1,5 @@
 import { prisma } from "@calcom/prisma";
 import { SMSLockState } from "@calcom/prisma/enums";
-
 import type { TrpcSessionUser } from "../../../types";
 
 type GetOptions = {
@@ -9,7 +8,7 @@ type GetOptions = {
   };
 };
 
-const getSMSLockStateTeamsUsers = async ({ ctx }: GetOptions) => {
+const getSMSLockStateTeamsUsers = async (_opts: GetOptions) => {
   const userSelect = {
     id: true,
     smsLockState: true,
@@ -27,32 +26,46 @@ const getSMSLockStateTeamsUsers = async ({ ctx }: GetOptions) => {
     logoUrl: true,
   };
 
-  const lockedUsers = await prisma.user.findMany({
-    where: {
-      smsLockState: SMSLockState.LOCKED,
-    },
-    select: userSelect,
-  });
-  const reviewNeededUsers = await prisma.user.findMany({
-    where: {
-      smsLockState: SMSLockState.REVIEW_NEEDED,
-    },
-    select: userSelect,
-  });
+  const smsLockStatesToReview = [SMSLockState.LOCKED, SMSLockState.REVIEW_NEEDED];
 
-  const lockedTeams = await prisma.team.findMany({
-    where: {
-      smsLockState: SMSLockState.LOCKED,
-    },
-    select: teamSelect,
-  });
+  const [users, teams] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        smsLockState: {
+          in: smsLockStatesToReview,
+        },
+      },
+      select: userSelect,
+    }),
+    prisma.team.findMany({
+      where: {
+        smsLockState: {
+          in: smsLockStatesToReview,
+        },
+      },
+      select: teamSelect,
+    }),
+  ]);
 
-  const reviewNeededTeams = await prisma.team.findMany({
-    where: {
-      smsLockState: SMSLockState.REVIEW_NEEDED,
-    },
-    select: teamSelect,
-  });
+  const lockedUsers: typeof users = [];
+  const reviewNeededUsers: typeof users = [];
+  for (const user of users) {
+    if (user.smsLockState === SMSLockState.LOCKED) {
+      lockedUsers.push(user);
+    } else if (user.smsLockState === SMSLockState.REVIEW_NEEDED) {
+      reviewNeededUsers.push(user);
+    }
+  }
+
+  const lockedTeams: typeof teams = [];
+  const reviewNeededTeams: typeof teams = [];
+  for (const team of teams) {
+    if (team.smsLockState === SMSLockState.LOCKED) {
+      lockedTeams.push(team);
+    } else if (team.smsLockState === SMSLockState.REVIEW_NEEDED) {
+      reviewNeededTeams.push(team);
+    }
+  }
 
   const resultObj = {
     users: {

@@ -1,13 +1,16 @@
+import process from "node:process";
+import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
+import {
+  APP_CREDENTIAL_SHARING_ENABLED,
+  CREDENTIAL_SYNC_SECRET,
+  CREDENTIAL_SYNC_SECRET_HEADER_NAME,
+} from "@calcom/lib/constants";
+import { symmetricDecrypt } from "@calcom/lib/crypto";
+import prisma from "@calcom/prisma";
 import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import z from "zod";
-
-import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
-import { CREDENTIAL_SYNC_SECRET, CREDENTIAL_SYNC_SECRET_HEADER_NAME } from "@calcom/lib/constants";
-import { APP_CREDENTIAL_SHARING_ENABLED } from "@calcom/lib/constants";
-import { symmetricDecrypt } from "@calcom/lib/crypto";
-import prisma from "@calcom/prisma";
 
 const appCredentialWebhookRequestBodySchema = z.object({
   // UserId of the cal.com user
@@ -37,16 +40,20 @@ async function postHandler(request: NextRequest) {
 
     const reqBody = reqBodyParsed.data;
 
-    const user = await prisma.user.findUnique({ where: { id: reqBody.userId } });
+    const [user, app] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: reqBody.userId },
+        select: { id: true },
+      }),
+      prisma.app.findUnique({
+        where: { slug: reqBody.appSlug },
+        select: { dirName: true },
+      }),
+    ]);
 
     if (!user) {
       return NextResponse.json({ message: "User not found" }, { status: 404 });
     }
-
-    const app = await prisma.app.findUnique({
-      where: { slug: reqBody.appSlug },
-      select: { dirName: true },
-    });
 
     if (!app) {
       return NextResponse.json({ message: "App not found" }, { status: 404 });
