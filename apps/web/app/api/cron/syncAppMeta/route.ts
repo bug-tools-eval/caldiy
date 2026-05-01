@@ -21,56 +21,6 @@ const appSyncSelect = {
   enabled: true,
 } satisfies Prisma.AppSelect;
 
-type AppSyncPayload = Prisma.AppGetPayload<{ select: typeof appSyncSelect }>;
-
-async function syncDbApp(dbApp: AppSyncPayload) {
-  const app = await getAppWithMetadata(dbApp);
-  const updates: Prisma.AppUpdateManyMutationInput = {};
-
-  if (!app) {
-    log.warn(`💀 App ${dbApp.slug} (${dbApp.dirName}) no longer exists.`);
-    return;
-  }
-
-  // Check for any changes in the app categories (tolerates changes in ordering)
-  const appCategories = new Set(app.categories);
-  if (
-    dbApp.categories.length !== app.categories.length ||
-    !dbApp.categories.every((category) => appCategories.has(category))
-  ) {
-    updates["categories"] = app.categories as AppCategories[];
-  }
-
-  if (dbApp.dirName !== (app.dirName ?? app.slug)) {
-    updates["dirName"] = app.dirName ?? app.slug;
-  }
-
-  // Ensure app is only enabled if it has valid keys (or doesn't require keys)
-  const shouldBeEnabled = shouldEnableApp(dbApp.dirName, dbApp.keys);
-  if (dbApp.enabled !== shouldBeEnabled) {
-    updates["enabled"] = shouldBeEnabled;
-    if (!shouldBeEnabled && dbApp.enabled) {
-      log.warn(
-        `⚠️ Disabling app ${dbApp.slug} - required keys are missing or invalid. Please configure keys in admin settings.`
-      );
-    }
-  }
-
-  const updateFields = Object.keys(updates);
-  if (updateFields.length > 0) {
-    log.info(`🔨 Updating app ${dbApp.slug} with ${updateFields.join(", ")}`);
-    if (!isDryRun) {
-      await prisma.app.update({
-        where: { slug: dbApp.slug },
-        data: updates,
-      });
-    }
-    return;
-  }
-
-  log.info(`✅ App ${dbApp.slug} is up-to-date and correct`);
-}
-
 /**
  * syncAppMeta makes sure any app metadata that has been replicated into the database
  * remains synchronized with any changes made to the app config files.
@@ -85,7 +35,56 @@ async function postHandler(request: NextRequest) {
   log.info(`🧐 Checking DB apps are in-sync with app metadata`);
 
   const dbApps = await prisma.app.findMany({ select: appSyncSelect });
-  await Promise.all(dbApps.map(syncDbApp));
+
+  await Promise.all(
+    dbApps.map(async (dbApp) => {
+      const app = await getAppWithMetadata(dbApp);
+      const updates: Prisma.AppUpdateManyMutationInput = {};
+
+      if (!app) {
+        log.warn(`💀 App ${dbApp.slug} (${dbApp.dirName}) no longer exists.`);
+        return;
+      }
+
+      // Check for any changes in the app categories (tolerates changes in ordering)
+      if (dbApp.categories.length !== app.categories.length) {
+        updates["categories"] = app.categories as AppCategories[];
+      } else {
+        const appCategories = new Set(app.categories);
+        if (!dbApp.categories.every((category) => appCategories.has(category))) {
+          updates["categories"] = app.categories as AppCategories[];
+        }
+      }
+
+      if (dbApp.dirName !== (app.dirName ?? app.slug)) {
+        updates["dirName"] = app.dirName ?? app.slug;
+      }
+
+      // Ensure app is only enabled if it has valid keys (or doesn't require keys)
+      const shouldBeEnabled = shouldEnableApp(dbApp.dirName, dbApp.keys);
+      if (dbApp.enabled !== shouldBeEnabled) {
+        updates["enabled"] = shouldBeEnabled;
+        if (!shouldBeEnabled && dbApp.enabled) {
+          log.warn(
+            `⚠️ Disabling app ${dbApp.slug} - required keys are missing or invalid. Please configure keys in admin settings.`
+          );
+        }
+      }
+
+      const updateFields = Object.keys(updates);
+      if (updateFields.length > 0) {
+        log.info(`🔨 Updating app ${dbApp.slug} with ${updateFields.join(", ")}`);
+        if (!isDryRun) {
+          await prisma.app.update({
+            where: { slug: dbApp.slug },
+            data: updates,
+          });
+        }
+      } else {
+        log.info(`✅ App ${dbApp.slug} is up-to-date and correct`);
+      }
+    })
+  );
 
   return NextResponse.json({ ok: true });
 }

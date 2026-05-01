@@ -1,9 +1,11 @@
-import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
-import { performance } from "@calcom/lib/server/perfObserver";
-import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
+
+import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
+import { performance } from "@calcom/lib/server/perfObserver";
+
+import { buildLegacyRequest } from "@lib/buildLegacyCtx";
 
 async function getHandler() {
   const prePrismaDate = performance.now();
@@ -19,10 +21,7 @@ async function getHandler() {
   }
 
   const preUserDate = performance.now();
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { name: true },
-  });
+  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
   if (!user) {
     return NextResponse.json({ message: "No user found" }, { status: 404 });
   }
