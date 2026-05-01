@@ -40,13 +40,6 @@ import {
 import { Request } from "express";
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { CalendarLink } from "@/platform/bookings/2024-08-13/outputs/calendar-links.output";
-import { BookingsRepository_2024_08_13 } from "@/platform/bookings/2024-08-13/repositories/bookings.repository";
-import { ErrorsBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/errors.service";
-import { InputBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/input.service";
-import { OutputBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/output.service";
-import { PlatformBookingsService } from "@/platform/bookings/shared/platform-bookings.service";
-import { EventTypesRepository_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/event-types.repository";
 import { getPagination } from "@/lib/pagination/pagination";
 import { RecurringBookingService } from "@/lib/services/recurring-booking.service";
 import { RegularBookingService } from "@/lib/services/regular-booking.service";
@@ -62,6 +55,13 @@ import { TeamsEventTypesRepository } from "@/modules/teams/event-types/teams-eve
 import { TeamsRepository } from "@/modules/teams/teams/teams.repository";
 import { UsersService } from "@/modules/users/services/users.service";
 import { UsersRepository } from "@/modules/users/users.repository";
+import { CalendarLink } from "@/platform/bookings/2024-08-13/outputs/calendar-links.output";
+import { BookingsRepository_2024_08_13 } from "@/platform/bookings/2024-08-13/repositories/bookings.repository";
+import { ErrorsBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/errors.service";
+import { InputBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/input.service";
+import { OutputBookingsService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/output.service";
+import { PlatformBookingsService } from "@/platform/bookings/shared/platform-bookings.service";
+import { EventTypesRepository_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/event-types.repository";
 
 export const BOOKING_REASSIGN_PERMISSION_ERROR = "You do not have permission to reassign this booking";
 
@@ -670,38 +670,43 @@ export class BookingsService_2024_08_13 {
     const bookingMap = new Map(bookings.map((booking) => [booking.id, booking]));
     const orderedBookings = ids.map((id) => bookingMap.get(id));
 
-    const formattedBookings: (
+    // Each booking's output transformation is independent of every other
+    // booking's (the seated/non-seated branches each issue their own
+    // bookingsRepository lookups), so resolve them concurrently. Order is
+    // preserved via the index returned from Promise.all.
+    type FormattedBooking =
       | BookingOutput_2024_08_13
       | RecurringBookingOutput_2024_08_13
       | GetSeatedBookingOutput_2024_08_13
-      | GetRecurringSeatedBookingOutput_2024_08_13
-    )[] = [];
-    for (const booking of orderedBookings) {
-      if (!booking) {
-        continue;
-      }
+      | GetRecurringSeatedBookingOutput_2024_08_13;
+    const formattedBookingsWithGaps: (FormattedBooking | null)[] = await Promise.all(
+      orderedBookings.map(async (booking) => {
+        if (!booking) return null;
 
-      const formatted = {
-        ...booking,
-        eventType: booking.eventType,
-        eventTypeId: booking.eventTypeId,
-        startTime: new Date(booking.startTime),
-        endTime: new Date(booking.endTime),
-        absentHost: !!booking.noShowHost,
-      };
+        const formatted = {
+          ...booking,
+          eventType: booking.eventType,
+          eventTypeId: booking.eventTypeId,
+          startTime: new Date(booking.startTime),
+          endTime: new Date(booking.endTime),
+          absentHost: !!booking.noShowHost,
+        };
 
-      const isRecurring = !!formatted.recurringEventId;
-      const isSeated = !!formatted.eventType?.seatsPerTimeSlot;
-      if (isRecurring && !isSeated) {
-        formattedBookings.push(this.outputService.getOutputRecurringBooking(formatted));
-      } else if (isRecurring && isSeated) {
-        formattedBookings.push(this.outputService.getOutputRecurringSeatedBooking(formatted, true));
-      } else if (isSeated) {
-        formattedBookings.push(await this.outputService.getOutputSeatedBooking(formatted, true));
-      } else {
-        formattedBookings.push(await this.outputService.getOutputBooking(formatted));
-      }
-    }
+        const isRecurring = !!formatted.recurringEventId;
+        const isSeated = !!formatted.eventType?.seatsPerTimeSlot;
+        if (isRecurring && !isSeated) {
+          return this.outputService.getOutputRecurringBooking(formatted);
+        }
+        if (isRecurring && isSeated) {
+          return this.outputService.getOutputRecurringSeatedBooking(formatted, true);
+        }
+        if (isSeated) {
+          return await this.outputService.getOutputSeatedBooking(formatted, true);
+        }
+        return await this.outputService.getOutputBooking(formatted);
+      })
+    );
+    const formattedBookings = formattedBookingsWithGaps.filter((b): b is FormattedBooking => b !== null);
 
     const pagination = getPagination({ skip, take, totalCount: fetchedBookings.totalCount });
 
