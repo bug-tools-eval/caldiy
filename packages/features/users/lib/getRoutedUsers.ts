@@ -30,8 +30,9 @@ export const getRoutedUsersWithContactOwnerAndFixedUsers = <
     "filtering users as per routedTeamMemberIds",
     safeStringify({ routedTeamMemberIds, contactOwnerEmail })
   );
+  const routedTeamMemberIdSet = new Set(routedTeamMemberIds);
   return users.filter(
-    (user) => routedTeamMemberIds.includes(user.id) || user.isFixed || user.email === contactOwnerEmail
+    (user) => routedTeamMemberIdSet.has(user.id) || user.isFixed || user.email === contactOwnerEmail
   );
 };
 
