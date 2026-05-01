@@ -1,17 +1,15 @@
-import { cloneDeep } from "lodash";
-import { uuid } from "short-uuid";
-
 import { sendRescheduledEmailsAndSMS } from "@calcom/emails/email-manager";
 import type EventManager from "@calcom/features/bookings/lib/EventManager";
+import { CalendarEventBuilder } from "@calcom/features/CalendarEventBuilder";
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { HttpError } from "@calcom/lib/http-error";
 import prisma from "@calcom/prisma";
 import { BookingStatus } from "@calcom/prisma/enums";
-
-import { CalendarEventBuilder } from "@calcom/features/CalendarEventBuilder";
+import { cloneDeep } from "lodash";
+import { uuid } from "short-uuid";
 import { findBookingQuery } from "../../../handleNewBooking/findBookingQuery";
 import type { createLoggerWithEventDetails } from "../../../handleNewBooking/logger";
-import type { SeatedBooking, RescheduleSeatedBookingObject, NewTimeSlotBooking } from "../../types";
+import type { NewTimeSlotBooking, RescheduleSeatedBookingObject, SeatedBooking } from "../../types";
 
 const combineTwoSeatedBookings = async (
   rescheduleSeatedBookingObject: RescheduleSeatedBookingObject,
@@ -35,11 +33,12 @@ const combineTwoSeatedBookings = async (
   const attendeesToMove = [],
     attendeesToDelete = [];
 
+  const newBookingAttendeeEmails = new Set(
+    newTimeSlotBooking.attendees.map((a: { email: string }) => a.email)
+  );
   for (const attendee of seatedBooking.attendees) {
     // If the attendee already exists on the new booking then delete the attendee record of the old booking
-    if (
-      newTimeSlotBooking.attendees.some((newBookingAttendee) => newBookingAttendee.email === attendee.email)
-    ) {
+    if (newBookingAttendeeEmails.has(attendee.email)) {
       attendeesToDelete.push(attendee.id);
       // If the attendee does not exist on the new booking then move that attendee record to the new booking
     } else {
