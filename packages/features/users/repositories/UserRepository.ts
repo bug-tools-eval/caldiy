@@ -171,20 +171,24 @@ export class UserRepository {
       usernameList,
     });
 
-    return (
-      await this.prismaClient.user.findMany({
-        select: userSelect,
-        where,
-      })
-    ).map((user) => {
+    const fetchedUsers = await this.prismaClient.user.findMany({
+      select: userSelect,
+      where,
+    });
+
+    // Pre-build a userId -> profile Map once instead of running .find per user
+    // when resolving each fetched user's profile.
+    const profileByUserId = profiles ? new Map(profiles.map((profile) => [profile.user.id, profile])) : null;
+
+    return fetchedUsers.map((user) => {
       // User isn't part of any organization
-      if (!profiles) {
+      if (!profileByUserId) {
         return {
           ...user,
           profile: ProfileRepository.buildPersonalProfileFromUser({ user }),
         };
       }
-      const profile = profiles.find((profile) => profile.user.id === user.id) ?? null;
+      const profile = profileByUserId.get(user.id) ?? null;
       if (!profile) {
         log.error("Profile not found for user", safeStringify({ user, profiles }));
         // Profile must be there because profile itself was used to retrieve the user
