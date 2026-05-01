@@ -21,9 +21,15 @@ import type { GetSubscribersOptions } from "./types";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 // Type for raw query results from the database
@@ -408,53 +414,55 @@ export class WebhookRepository implements IWebhookRepository {
       },
     });
 
-    // Check permissions for each team
-    // The permission service handles PBAC when enabled and falls back to role-based permissions
-    for (const membership of user.teams) {
-      const teamId = membership.team.id;
+    // Check permissions for each team in parallel — read/update/delete for
+    // every team are independent of every other team. We previously awaited
+    // canRead serially per team, which scaled linearly with team count.
+    const perTeamGroups = await Promise.all(
+      user.teams.map(async (membership) => {
+        const teamId = membership.team.id;
+        const [canRead, canUpdate, canDelete] = await Promise.all([
+          permissionService.checkPermission({
+            userId,
+            teamId,
+            permission: "webhook.read",
+            fallbackRoles: [MembershipRole.MEMBER, MembershipRole.ADMIN, MembershipRole.OWNER],
+          }),
+          permissionService.checkPermission({
+            userId,
+            teamId,
+            permission: "webhook.update",
+            fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+          }),
+          permissionService.checkPermission({
+            userId,
+            teamId,
+            permission: "webhook.delete",
+            fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
+          }),
+        ]);
 
-      // Check read permission (fallback: MEMBER, ADMIN, OWNER can read)
-      const canRead = await permissionService.checkPermission({
-        userId,
-        teamId,
-        permission: "webhook.read",
-        fallbackRoles: [MembershipRole.MEMBER, MembershipRole.ADMIN, MembershipRole.OWNER],
-      });
+        if (!canRead) {
+          return null;
+        }
 
-      if (!canRead) {
-        // User doesn't have permission to view this team's webhooks
-        continue;
-      }
+        return {
+          teamId: membership.team.id,
+          profile: {
+            name: membership.team.name,
+            slug: membership.team.slug || null,
+            image: getPlaceholderAvatar(membership.team.logoUrl, membership.team.name),
+          },
+          webhooks: WebhookOutputMapper.toWebhookList(membership.team.webhooks.filter(filterWebhooks)),
+          metadata: {
+            canModify: canUpdate,
+            canDelete,
+          },
+        };
+      })
+    );
 
-      // Check update/delete permissions in parallel (fallback: only ADMIN, OWNER can modify)
-      const [canUpdate, canDelete] = await Promise.all([
-        permissionService.checkPermission({
-          userId,
-          teamId,
-          permission: "webhook.update",
-          fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
-        }),
-        permissionService.checkPermission({
-          userId,
-          teamId,
-          permission: "webhook.delete",
-          fallbackRoles: [MembershipRole.ADMIN, MembershipRole.OWNER],
-        }),
-      ]);
-
-      webhookGroups.push({
-        teamId: membership.team.id,
-        profile: {
-          name: membership.team.name,
-          slug: membership.team.slug || null,
-          image: getPlaceholderAvatar(membership.team.logoUrl, membership.team.name),
-        },
-        webhooks: WebhookOutputMapper.toWebhookList(membership.team.webhooks.filter(filterWebhooks)),
-        metadata: {
-          canModify: canUpdate,
-          canDelete,
-        },
-      });
+    for (const group of perTeamGroups) {
+      if (group) webhookGroups.push(group);
     }
 
     // Add platform webhooks for admins
