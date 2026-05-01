@@ -312,7 +312,7 @@ export class UserAvailabilityService {
     dateTo: Dayjs
   ) {
     const { schedulingType, hosts, id } = eventType;
-    const hostEmails = hosts?.map((host) => host.user.email);
+    const hostEmailSet = hosts ? new Set(hosts.map((host) => host.user.email)) : null;
     const isTeamEvent =
       schedulingType === SchedulingType.MANAGED ||
       schedulingType === SchedulingType.ROUND_ROBIN ||
@@ -325,9 +325,10 @@ export class UserAvailabilityService {
     });
 
     return bookings.map((booking) => {
-      const attendees = isTeamEvent
-        ? booking.attendees.filter((attendee) => !hostEmails?.includes(attendee.email))
-        : booking.attendees;
+      const attendees =
+        isTeamEvent && hostEmailSet
+          ? booking.attendees.filter((attendee) => !hostEmailSet.has(attendee.email))
+          : booking.attendees;
 
       return {
         uid: booking.uid,

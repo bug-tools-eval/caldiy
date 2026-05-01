@@ -2,10 +2,8 @@ import { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 import { getTranslation } from "@calcom/i18n/server";
 import prisma from "@calcom/prisma";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import { TRPCError } from "@trpc/server";
-
-import { type TOutOfOfficeEntriesListSchema } from "./outOfOfficeEntriesList.schema";
+import type { TOutOfOfficeEntriesListSchema } from "./outOfOfficeEntriesList.schema";
 
 type GetOptions = {
   ctx: {
@@ -42,9 +40,9 @@ export const outOfOfficeEntriesList = async ({ ctx, input }: GetOptions) => {
     if (teams.length === 0) {
       throw new TRPCError({ code: "NOT_FOUND", message: t("user_has_no_team_yet") });
     }
-    const ownerOrAdminTeamIds = teams
-      .filter((team) => checkAdminOrOwner(team.role))
-      .map((team) => team.teamId);
+    const ownerOrAdminTeamIds = new Set(
+      teams.filter((team) => checkAdminOrOwner(team.role)).map((team) => team.teamId)
+    );
 
     // Fetch team member userIds
     const teamMembers = await prisma.team.findMany({
@@ -71,7 +69,7 @@ export const outOfOfficeEntriesList = async ({ ctx, input }: GetOptions) => {
     }
     fetchOOOEntriesForIds = userIds;
 
-    const adminTeams = teamMembers.filter(({ id }) => ownerOrAdminTeamIds.includes(id));
+    const adminTeams = teamMembers.filter(({ id }) => ownerOrAdminTeamIds.has(id));
 
     reportingUserIds = adminTeams.flatMap(({ members }) =>
       members.filter(({ accepted, userId }) => accepted && userId !== ctx.user.id).map(({ userId }) => userId)
@@ -158,18 +156,20 @@ export const outOfOfficeEntriesList = async ({ ctx, input }: GetOptions) => {
     take: limit + 1,
   });
 
-  let nextCursor: number | undefined = undefined;
+  let nextCursor: number | undefined;
   if (outOfOfficeEntries && outOfOfficeEntries.length > limit) {
     const nextItem = outOfOfficeEntries.pop();
     nextCursor = nextItem?.id;
   }
+
+  const reportingUserIdSet = new Set(reportingUserIds);
 
   return {
     rows:
       outOfOfficeEntries.map((ooo) => {
         return {
           ...ooo,
-          canEditAndDelete: fetchTeamMembersEntries ? reportingUserIds.includes(ooo.user.id) : true,
+          canEditAndDelete: fetchTeamMembersEntries ? reportingUserIdSet.has(ooo.user.id) : true,
         };
       }) || [],
     nextCursor,

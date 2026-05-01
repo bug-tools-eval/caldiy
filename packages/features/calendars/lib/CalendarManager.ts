@@ -283,14 +283,15 @@ export const deduplicateCredentialsBasedOnSelectedCalendars = ({
 
   // For each selected calendar with user email, check if a delegation credential exists for the same integration.
   // If yes, we remove such a regular credential as that is a duplicate
-  const credentialIdsToRemove = selectedCalendarsWithUserEmailConnectedWithRegularCredential
-    .filter((calendar) =>
-      delegationCredentials.some((credential) => credential.type === calendar.integration)
-    )
-    .map((calendar) => calendar.credentialId);
+  const delegationCredentialTypeSet = new Set(delegationCredentials.map((c) => c.type));
+  const credentialIdsToRemove = new Set(
+    selectedCalendarsWithUserEmailConnectedWithRegularCredential
+      .filter((calendar) => delegationCredentialTypeSet.has(calendar.integration))
+      .map((calendar) => calendar.credentialId)
+  );
 
   // Remove the regular credentials that are now handled by delegation credentials
-  return deduplicatedCredentials.filter((credential) => !credentialIdsToRemove.includes(credential.id));
+  return deduplicatedCredentials.filter((credential) => !credentialIdsToRemove.has(credential.id));
 };
 
 export const getBusyCalendarTimes = async (
