@@ -87,6 +87,7 @@ const fetchEventTypeGroups = async ({
       {
         where: {
           accepted: true,
+          ...(teamId ? { teamId } : {}),
         },
         skipEventTypes,
       }
