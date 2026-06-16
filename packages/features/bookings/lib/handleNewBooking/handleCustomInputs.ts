@@ -1,7 +1,6 @@
+import type { EventTypeCustomInput } from "@calcom/prisma/client";
 import { isValidPhoneNumber } from "libphonenumber-js/max";
 import z from "zod";
-
-import type { EventTypeCustomInput } from "@calcom/prisma/client";
 
 type CustomInput = {
   value: string | boolean;
@@ -12,9 +11,10 @@ export function handleCustomInputs(
   eventTypeCustomInputs: EventTypeCustomInput[],
   reqCustomInputs: CustomInput[]
 ) {
+  const inputByLabel = new Map(reqCustomInputs.map((input) => [input.label, input]));
   eventTypeCustomInputs.forEach((etcInput) => {
     if (etcInput.required) {
-      const input = reqCustomInputs.find((input) => input.label === etcInput.label);
+      const input = inputByLabel.get(etcInput.label);
       validateInput(etcInput, input?.value);
     }
   });

@@ -20,10 +20,17 @@ export class BookingVideoService_2024_08_13 {
       (ref) => (ref.type.endsWith("_video") || ref.type.endsWith("_conferencing")) && !ref.deleted && ref.uid
     );
 
-    for (const reference of videoReferences) {
-      const credential = await this.findCredentialForVideoReference(reference, booking.user.credentials);
+    // Each video reference targets a different external video provider, so
+    // the credential lookup + deleteMeeting calls are independent and can
+    // run concurrently. We swallow per-reference errors via .catch so a
+    // single provider failure doesn't block the others (preserving the
+    // original try/catch + logging behaviour).
+    const userCredentials = booking.user.credentials;
+    await Promise.all(
+      videoReferences.map(async (reference) => {
+        const credential = await this.findCredentialForVideoReference(reference, userCredentials);
+        if (!credential || !reference.uid) return;
 
-      if (credential && reference.uid) {
         try {
           await deleteMeeting(credential, reference.uid);
           this.logger.log(
@@ -35,8 +42,8 @@ export class BookingVideoService_2024_08_13 {
             error instanceof Error ? error.message : String(error)
           );
         }
-      }
-    }
+      })
+    );
   }
 
   async findCredentialForVideoReference(

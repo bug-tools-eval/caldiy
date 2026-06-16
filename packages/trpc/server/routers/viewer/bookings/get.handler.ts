@@ -20,9 +20,15 @@ import type { TGetInputSchema } from "./get.schema";
 
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type GetOptions = {
@@ -147,8 +153,9 @@ export async function getBookings({
 
   // If userIds filter is provided
   if (!!filters?.userIds && filters.userIds.length > 0) {
+    const allAccessibleUserIdSet = new Set(allAccessibleUserIds);
     const areUserIdsWithinUserOrgOrTeam = filters.userIds.every((userId) =>
-      allAccessibleUserIds.includes(userId)
+      allAccessibleUserIdSet.has(userId)
     );
 
     const isCurrentUser = filters.userIds.length === 1 && user.id === filters.userIds[0];

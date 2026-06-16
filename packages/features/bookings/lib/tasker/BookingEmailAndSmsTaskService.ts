@@ -65,9 +65,9 @@ export class BookingEmailAndSmsTaskService implements BookingTasks {
   async confirm(payload: Parameters<BookingTasks["confirm"]>[0]) {
     const { booking, eventType, calendarEvent } = await this._getVerifiedBookingData(payload);
 
-    const attendeesEmail = booking.attendees.map((attendee) => attendee.email);
+    const attendeeEmails = new Set(booking.attendees.map((attendee) => attendee.email));
     const bookedTeamMembers = eventType.team
-      ? eventType.team.members.filter((teamUser) => attendeesEmail.includes(teamUser.user.email))
+      ? eventType.team.members.filter((teamUser) => attendeeEmails.has(teamUser.user.email))
       : [];
 
     const eventNameObject = {

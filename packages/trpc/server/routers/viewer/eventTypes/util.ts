@@ -14,9 +14,15 @@ import type { TUpdateInputSchema } from "./types";
 type PermissionString = string;
 class PermissionCheckService {
   constructor(_prisma?: unknown) {}
-  async checkPermission(..._args: unknown[]) { return true; }
-  async hasPermission(..._args: unknown[]) { return true; }
-  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> { return []; }
+  async checkPermission(..._args: unknown[]) {
+    return true;
+  }
+  async hasPermission(..._args: unknown[]) {
+    return true;
+  }
+  async getTeamIdsWithPermission(..._args: unknown[]): Promise<number[]> {
+    return [];
+  }
 }
 
 type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
@@ -78,8 +84,8 @@ export const eventOwnerProcedure = authedProcedure
 
     const isAllowed = (() => {
       if (event.team) {
-        const allTeamMembers = event.team.members.map((member) => member.userId);
-        return input.users.every((userId: number) => allTeamMembers.includes(userId));
+        const allTeamMemberIds = new Set(event.team.members.map((member) => member.userId));
+        return input.users.every((userId: number) => allTeamMemberIds.has(userId));
       }
       return input.users.every((userId: number) => userId === ctx.user.id);
     })();
@@ -178,8 +184,8 @@ export const createEventPbacProcedure = (
       if (input.users && input.users.length > 0) {
         const isAllowed = (() => {
           if (event.team) {
-            const allTeamMembers = event.team.members.map((member) => member.userId);
-            return input.users?.every((userId: number) => allTeamMembers.includes(userId)) ?? true;
+            const allTeamMemberIds = new Set(event.team.members.map((member) => member.userId));
+            return input.users?.every((userId: number) => allTeamMemberIds.has(userId)) ?? true;
           }
           return input.users?.every((userId: number) => userId === ctx.user.id) ?? true;
         })();

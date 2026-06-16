@@ -1,5 +1,9 @@
 import type { BookingWithUserAndEventDetails, CalendarEvent } from "@calcom/platform-libraries";
-import { buildCalEventFromBooking, sendLocationChangeEmailsAndSMS, updateEvent } from "@calcom/platform-libraries";
+import {
+  buildCalEventFromBooking,
+  sendLocationChangeEmailsAndSMS,
+  updateEvent,
+} from "@calcom/platform-libraries";
 import { Injectable, Logger } from "@nestjs/common";
 import { BookingsRepository_2024_08_13 } from "@/platform/bookings/2024-08-13/repositories/bookings.repository";
 import { BookingLocationCredentialService_2024_08_13 } from "@/platform/bookings/2024-08-13/services/booking-location-credential.service";
@@ -98,27 +102,34 @@ export class BookingLocationCalendarSyncService_2024_08_13 {
 
     const evt = await this.buildCalEventFromBookingData(booking, newLocation, null);
 
-    for (const reference of calendarReferences) {
-      const credential = await this.credentialService.getCredentialForReference(reference, booking.user.credentials);
+    // Calendar references are independent (each goes to a different
+    // calendar provider), so credential lookup + updateEvent calls run
+    // concurrently. Per-reference errors are swallowed via try/catch so a
+    // single provider failure doesn't block the others.
+    const userCredentials = booking.user.credentials;
+    await Promise.all(
+      calendarReferences.map(async (reference) => {
+        const credential = await this.credentialService.getCredentialForReference(reference, userCredentials);
 
-      if (!credential) {
-        this.logger.warn(
-          `syncCalendarEvent - No credential found for reference id=${reference.id}, credentialId=${reference.credentialId}`
-        );
-        continue;
-      }
+        if (!credential) {
+          this.logger.warn(
+            `syncCalendarEvent - No credential found for reference id=${reference.id}, credentialId=${reference.credentialId}`
+          );
+          return;
+        }
 
-      try {
-        await updateEvent(credential, evt, reference.uid, reference.externalCalendarId);
-        this.logger.log(
-          `syncCalendarEvent - Successfully updated calendar event for reference id=${reference.id}`
-        );
-      } catch (error) {
-        this.logger.error(
-          `syncCalendarEvent - Failed to update calendar for reference id=${reference.id}`,
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-    }
+        try {
+          await updateEvent(credential, evt, reference.uid, reference.externalCalendarId);
+          this.logger.log(
+            `syncCalendarEvent - Successfully updated calendar event for reference id=${reference.id}`
+          );
+        } catch (error) {
+          this.logger.error(
+            `syncCalendarEvent - Failed to update calendar for reference id=${reference.id}`,
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      })
+    );
   }
 }

@@ -312,7 +312,7 @@ export class UserAvailabilityService {
     dateTo: Dayjs
   ) {
     const { schedulingType, hosts, id } = eventType;
-    const hostEmails = hosts?.map((host) => host.user.email);
+    const hostEmailSet = hosts ? new Set(hosts.map((host) => host.user.email)) : null;
     const isTeamEvent =
       schedulingType === SchedulingType.MANAGED ||
       schedulingType === SchedulingType.ROUND_ROBIN ||
@@ -325,9 +325,10 @@ export class UserAvailabilityService {
     });
 
     return bookings.map((booking) => {
-      const attendees = isTeamEvent
-        ? booking.attendees.filter((attendee) => !hostEmails?.includes(attendee.email))
-        : booking.attendees;
+      const attendees =
+        isTeamEvent && hostEmailSet
+          ? booking.attendees.filter((attendee) => !hostEmailSet.has(attendee.email))
+          : booking.attendees;
 
       return {
         uid: booking.uid,
@@ -741,16 +742,14 @@ export class UserAvailabilityService {
           : dayjs(start).utc().startOf("day");
 
         // get number of day in the week and see if it's on the availability
-        const flattenDays = Array.from(
-          new Set(availability.flatMap((a) => ("days" in a ? a.days : [])))
-        ).sort((a, b) => a - b);
+        const flattenDays = new Set(availability.flatMap((a) => ("days" in a ? a.days : [])));
 
         const endDateRange = dayjs(end).utc().endOf("day");
 
         for (let date = startDateRange; date.isBefore(endDateRange); date = date.add(1, "day")) {
           const dayNumberOnWeek = date.day();
 
-          if (!flattenDays?.includes(dayNumberOnWeek)) {
+          if (!flattenDays.has(dayNumberOnWeek)) {
             continue; // Skip to the next iteration if day not found in flattenDays
           }
           // null notes if not to be shown publicly
@@ -857,9 +856,7 @@ export class UserAvailabilityService {
     }
 
     // Match OOO pattern: get working days from availability
-    const flattenDays = Array.from(new Set(availability.flatMap((a) => ("days" in a ? a.days : [])))).sort(
-      (a, b) => a - b
-    );
+    const flattenDays = new Set(availability.flatMap((a) => ("days" in a ? a.days : [])));
 
     const result: IOutOfOfficeData = {};
 
@@ -867,7 +864,7 @@ export class UserAvailabilityService {
       // Match OOO pattern: use dayjs.utc() to parse date string and get day of week
       const dayOfWeek = dayjs.utc(date).day();
 
-      if (!flattenDays.includes(dayOfWeek)) {
+      if (!flattenDays.has(dayOfWeek)) {
         continue;
       }
 

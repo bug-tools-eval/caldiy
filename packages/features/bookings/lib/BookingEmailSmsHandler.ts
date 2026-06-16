@@ -155,18 +155,18 @@ export class BookingEmailSmsHandler {
     const cancelledRRHostEvt = cloneDeep(copyEventAdditionalInfo);
     this.log.debug("Emails: Sending rescheduled emails for booking confirmation");
 
-    const originalBookingMemberEmails: Person[] = [];
-
-    for (const user of originalRescheduledBooking.attendees) {
-      const translate = await getTranslation(user.locale ?? "en", "common");
-      originalBookingMemberEmails.push({
+    const originalBookingMemberEmails: Person[] = await Promise.all(
+      originalRescheduledBooking.attendees.map(async (user) => ({
         name: user.name,
         email: user.email,
         timeZone: user.timeZone,
         phoneNumber: user.phoneNumber,
-        language: { translate, locale: user.locale ?? "en" },
-      });
-    }
+        language: {
+          translate: await getTranslation(user.locale ?? "en", "common"),
+          locale: user.locale ?? "en",
+        },
+      }))
+    );
     if (originalRescheduledBooking.user) {
       const translate = await getTranslation(originalRescheduledBooking.user.locale ?? "en", "common");
       const originalOrganizer = originalRescheduledBooking.user;

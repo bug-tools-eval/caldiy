@@ -1,10 +1,8 @@
-import React from "react";
-import { createStore, useStore } from "zustand";
-import type { StoreApi } from "zustand";
-
 import dayjs from "@calcom/dayjs";
 import { CURRENT_TIMEZONE } from "@calcom/lib/timezoneConstants";
-
+import React from "react";
+import type { StoreApi } from "zustand";
+import { createStore, useStore } from "zustand";
 import type {
   CalendarComponentProps,
   CalendarPublicActions,
@@ -42,7 +40,13 @@ export function createCalendarStore(initial?: Partial<CalendarComponentProps>): 
       let events = state.events;
 
       if (state.sortEvents) {
-        events = [...state.events].sort((a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf());
+        // Precompute the start timestamp once per event (Schwartzian transform):
+        // the comparator otherwise constructed two dayjs instances per
+        // comparison, allocating O(N log N) objects. Native Date#getTime is
+        // also significantly cheaper than dayjs(...).valueOf().
+        const eventsWithStartMs = state.events.map((e) => ({ event: e, start: new Date(e.start).getTime() }));
+        eventsWithStartMs.sort((a, b) => a.start - b.start);
+        events = eventsWithStartMs.map((e) => e.event);
       }
       const blockingDates = mergeOverlappingDateRanges(state.blockingDates || []); // We merge overlapping dates so we don't get duplicate blocking "Cells" in the UI
 

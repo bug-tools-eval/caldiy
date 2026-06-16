@@ -1,8 +1,6 @@
-import type z from "zod";
-
 import { slugify } from "@calcom/lib/slugify";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-
+import type z from "zod";
 import type { bookingCreateSchemaLegacyPropsForApi } from "../bookingCreateBodySchema";
 import type { getEventTypeResponse } from "./getEventTypesFromDB";
 
@@ -30,9 +28,10 @@ function mapResponsesToCustomInputs(
   eventTypeCustomInputs: getEventTypeResponse["customInputs"]
 ): NonNullable<CalendarEvent["customInputs"]> {
   // Backward Compatibility: Map new `responses` to old `customInputs` format so that webhooks can still receive same values.
+  const inputBySlug = new Map(eventTypeCustomInputs.map((input) => [slugify(input.label), input]));
   return Object.entries(responses).reduce(
     (acc, [fieldName, fieldValue]) => {
-      const foundInput = eventTypeCustomInputs.find((input) => slugify(input.label) === fieldName);
+      const foundInput = inputBySlug.get(fieldName);
       if (foundInput) {
         acc[foundInput.label] = fieldValue;
       }

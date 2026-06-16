@@ -30,9 +30,8 @@ export async function hasEditPermissionForUserID({ ctx, input }: InputOptions) {
     },
   });
 
-  const teamIdOverlaps = authedUsersTeams.some((authedTeam) => {
-    return targetUsersTeams.some((targetTeam) => targetTeam.teamId === authedTeam.teamId);
-  });
+  const targetTeamIds = new Set(targetUsersTeams.map((t) => t.teamId));
+  const teamIdOverlaps = authedUsersTeams.some((authedTeam) => targetTeamIds.has(authedTeam.teamId));
 
   return teamIdOverlaps;
 }
@@ -55,9 +54,8 @@ export async function hasReadPermissionsForUserId({
     },
   });
 
-  const teamIdOverlaps = authedUsersTeams.some((authedTeam) => {
-    return targetUsersTeams.some((targetTeam) => targetTeam.teamId === authedTeam.teamId);
-  });
+  const targetTeamIds = new Set(targetUsersTeams.map((t) => t.teamId));
+  const teamIdOverlaps = authedUsersTeams.some((authedTeam) => targetTeamIds.has(authedTeam.teamId));
 
   return teamIdOverlaps;
 }

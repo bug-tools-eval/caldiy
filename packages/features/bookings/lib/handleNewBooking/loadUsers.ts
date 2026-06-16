@@ -12,7 +12,10 @@ import { Prisma } from "@calcom/prisma/client";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import type { NewBookingEventType } from "./getEventTypesFromDB";
 
-const getOrgDomainConfig = (..._args: unknown[]) => ({ currentOrgDomain: null as string | null, isValidOrgDomain: false });
+const getOrgDomainConfig = (..._args: unknown[]) => ({
+  currentOrgDomain: null as string | null,
+  isValidOrgDomain: false,
+});
 
 const log = logger.getSubLogger({ prefix: ["[loadUsers]:handleNewBooking "] });
 
@@ -106,9 +109,10 @@ const loadDynamicUsers = async (dynamicUserList: string[], currentOrgDomain: str
 
   // For dynamic group bookings: reorder users to match dynamicUserList order
   // to ensure the first user in the URL is the organizer/host
+  const indexByUsername = new Map<string, number>(dynamicUserList.map((name, idx) => [name, idx]));
   return users.sort((a, b) => {
-    const aIndex = dynamicUserList.indexOf(a.username!);
-    const bIndex = dynamicUserList.indexOf(b.username!);
+    const aIndex = indexByUsername.get(a.username!) ?? -1;
+    const bIndex = indexByUsername.get(b.username!) ?? -1;
     return aIndex - bIndex;
   });
 };
@@ -129,20 +133,20 @@ export const findUsersByUsername = async ({
     orgSlug,
     usernameList,
   });
-  return (
-    await prisma.user.findMany({
-      where,
-      select: {
-        ...userSelect,
-        credentials: {
-          select: credentialForCalendarServiceSelect,
-        },
-        metadata: true,
+  const fetchedUsers = await prisma.user.findMany({
+    where,
+    select: {
+      ...userSelect,
+      credentials: {
+        select: credentialForCalendarServiceSelect,
       },
-    })
-  ).map((_user) => {
+      metadata: true,
+    },
+  });
+  const profileByUserId = profiles ? new Map(profiles.map((p) => [p.user.id, p])) : null;
+  return fetchedUsers.map((_user) => {
     const user = withSelectedCalendars(_user);
-    const profile = profiles?.find((profile) => profile.user.id === user.id) ?? null;
+    const profile = profileByUserId ? (profileByUserId.get(user.id) ?? null) : null;
     return {
       ...user,
       organizationId: profile?.organizationId ?? null,

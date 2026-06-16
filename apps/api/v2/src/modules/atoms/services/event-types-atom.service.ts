@@ -25,8 +25,6 @@ import {
 } from "@calcom/platform-libraries/event-types";
 import type { PrismaClient } from "@calcom/prisma";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
-import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 import { AtomsRepository } from "@/modules/atoms/atoms.repository";
 import { CredentialsRepository } from "@/modules/credentials/credentials.repository";
 import { MembershipsRepository } from "@/modules/memberships/memberships.repository";
@@ -34,6 +32,8 @@ import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { UsersService } from "@/modules/users/services/users.service";
 import { UsersRepository, UserWithProfile } from "@/modules/users/users.repository";
+import { EventTypesService_2024_06_14 } from "@/platform/event-types/event-types_2024_06_14/services/event-types.service";
+import { systemBeforeFieldEmail } from "@/platform/event-types/event-types_2024_06_14/transformers";
 
 type EnabledAppType = App & {
   credential: CredentialDataWithTeamName;
@@ -240,6 +240,10 @@ export class EventTypesAtomService {
         where: { slug },
       }
     );
+    const userTeamById = new Map(userTeams.map((team) => [team.id, team]));
+    const installedSlugs = new Set(
+      enabledApps.filter((a: EnabledAppType) => a.credentials.length > 0).map((a: EnabledAppType) => a.slug)
+    );
     const apps = await Promise.all(
       enabledApps
         .filter(({ ...app }) => app.slug === slug)
@@ -261,7 +265,7 @@ export class EventTypesAtomService {
               credentials
                 .filter((c) => c.appId === app.slug && c.teamId)
                 .map(async (c) => {
-                  const team = userTeams.find((team) => team.id === c.teamId);
+                  const team = c.teamId != null ? userTeamById.get(c.teamId) : undefined;
                   if (!team) {
                     return null;
                   }
@@ -278,10 +282,7 @@ export class EventTypesAtomService {
             let dependencyData: TDependencyData = [];
             if (app.dependencies?.length) {
               dependencyData = app.dependencies.map((dependency) => {
-                const dependencyInstalled = enabledApps.some(
-                  (dbAppIterator: EnabledAppType) =>
-                    dbAppIterator.credentials.length && dbAppIterator.slug === dependency
-                );
+                const dependencyInstalled = installedSlugs.has(dependency);
                 // If the app marked as dependency is simply deleted from the codebase,
                 // we can have the situation where App is marked installed in DB but we couldn't get the app.
                 const dependencyName = getAppFromSlug(dependency)?.name;

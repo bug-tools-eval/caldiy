@@ -216,8 +216,9 @@ const _loadAndValidateUsers = async ({
     })
   );
 
+  const qualifiedRRUserIds = new Set(qualifiedRRUsers.map((u) => u.id));
   const additionalFallbackRRUsers = allFallbackRRUsers.filter(
-    (fallbackUser) => !qualifiedRRUsers.find((qualifiedUser) => qualifiedUser.id === fallbackUser.id)
+    (fallbackUser) => !qualifiedRRUserIds.has(fallbackUser.id)
   );
 
   if (!qualifiedRRUsers.length && !fixedUsers.length) {

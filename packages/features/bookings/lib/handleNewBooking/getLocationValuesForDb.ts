@@ -8,9 +8,14 @@ const sortUsersByDynamicList = <TUser extends { username: string | null }>(
   users: TUser[],
   dynamicUserList: string[]
 ) => {
+  const indexByUsername = new Map<string, number>(dynamicUserList.map((name, idx) => [name, idx]));
+  // Preserves the original `indexOf` semantics: returns -1 when the username is
+  // missing from the list (kept by `|| 0` because -1 is truthy), and 0 for both
+  // a missing-username record and a record whose username sits at index 0.
+  const indexOf = (name: string) => indexByUsername.get(name) ?? -1;
   return users.sort((a, b) => {
-    const aIndex = (a.username && dynamicUserList.indexOf(a.username)) || 0;
-    const bIndex = (b.username && dynamicUserList.indexOf(b.username)) || 0;
+    const aIndex = (a.username && indexOf(a.username)) || 0;
+    const bIndex = (b.username && indexOf(b.username)) || 0;
     return aIndex - bIndex;
   });
 };

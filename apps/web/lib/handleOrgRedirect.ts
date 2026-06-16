@@ -1,6 +1,5 @@
 import type { ParsedUrlQuery } from "node:querystring";
 import { stringify } from "node:querystring";
-
 import { SINGLE_ORG_SLUG } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
@@ -74,8 +73,9 @@ const getTemporaryOrgRedirect = async ({
   const currentQueryString = stringify(filteredQuery);
   const query = currentQueryString ? `?${currentQueryString}&orgRedirection=true` : "?orgRedirection=true";
   // Use the same order as in input slugs - It is important from Dynamic Group perspective as the first user's settings are used for various things
+  const redirectByFrom = new Map(redirects.map((r) => [r.from, r]));
   const newSlugs = slugs.map((slug) => {
-    const redirect = redirects.find((redirect) => redirect.from === slug);
+    const redirect = redirectByFrom.get(slug);
     if (!redirect) {
       return slug;
     }

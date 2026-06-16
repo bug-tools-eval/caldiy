@@ -569,7 +569,10 @@ export class AvailableSlotsService {
 
             const selectedDuration = (duration || eventType.length) ?? 0;
 
-            const { title: durationTitle, source: durationSource } = LimitSources.eventDurationLimit({ limit, unit });
+            const { title: durationTitle, source: durationSource } = LimitSources.eventDurationLimit({
+              limit,
+              unit,
+            });
 
             if (selectedDuration > limit) {
               limitManager.addBusyTime({
@@ -1179,14 +1182,19 @@ export class AvailableSlotsService {
         (item) => item.isSeat && item.eventTypeId === eventType.id
       );
       if (occupiedSeats?.length) {
-        const addedToCurrentSeats: string[] = [];
+        const addedToCurrentSeats = new Set<string>();
         if (typeof availabilityCheckProps.currentSeats !== "undefined") {
+          // Bucket occupied seats by their slot start ISO once (O(N)) so the
+          // per-current-seat lookup becomes O(1) instead of O(occupiedSeats).
+          const occupiedSeatCountByStartIso = new Map<string, number>();
+          for (const seat of occupiedSeats) {
+            const key = seat.slotUtcStartDate.toISOString();
+            occupiedSeatCountByStartIso.set(key, (occupiedSeatCountByStartIso.get(key) ?? 0) + 1);
+          }
           availabilityCheckProps.currentSeats = availabilityCheckProps.currentSeats.map((item) => {
-            const attendees =
-              occupiedSeats.filter(
-                (seat) => seat.slotUtcStartDate.toISOString() === item.startTime.toISOString()
-              )?.length || 0;
-            if (attendees) addedToCurrentSeats.push(item.startTime.toISOString());
+            const startIso = item.startTime.toISOString();
+            const attendees = occupiedSeatCountByStartIso.get(startIso) ?? 0;
+            if (attendees) addedToCurrentSeats.add(startIso);
             return {
               ...item,
               _count: {
@@ -1195,7 +1203,7 @@ export class AvailableSlotsService {
             };
           });
           occupiedSeats = occupiedSeats.filter(
-            (item) => !addedToCurrentSeats.includes(item.slotUtcStartDate.toISOString())
+            (item) => !addedToCurrentSeats.has(item.slotUtcStartDate.toISOString())
           );
         }
 
